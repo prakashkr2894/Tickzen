@@ -1,17 +1,14 @@
 import path from "path";
 
 /** @type {import('next').NextConfig} */
-// Must match backend PORT (e.g. backend/.env → PORT=5000). Override in frontend/.env.local: BACKEND_URL=http://localhost:5000
-const backend =
-  process.env.BACKEND_URL?.replace(/\/+$/, "") || "http://localhost:5000";
-
 const nextConfig = {
   outputFileTracingRoot: path.resolve(process.cwd()),
+
   async rewrites() {
     return [
       {
-        source: "/api/:path*",
-        destination: `${backend}/api/:path*`,
+          source: "/api/:path*",
+          destination: "http://localhost:5000/api/:path*",
       },
     ];
   },
