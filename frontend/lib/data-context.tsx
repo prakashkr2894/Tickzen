@@ -66,15 +66,25 @@ const splitName = (name: string) => {
   };
 };
 
-const mapApiUser = (user: { _id?: string; id?: string; name: string; email: string; role?: string }): User => {
+const mapApiUser = (user: any): User => {
+  if (!user) {
+    return {
+      id: "",
+      email: "",
+      firstName: "Deleted",
+      lastName: "User",
+      role: "developer",
+      createdAt: new Date().toISOString(),
+    };
+  }
   const { firstName, lastName } = splitName(user.name);
   return {
     id: (user.id || user._id || "").toString(),
-    email: user.email,
+    email: user.email || "",
     firstName,
     lastName,
     role: user.role === "admin" ? "admin" : "developer",
-    createdAt: new Date().toISOString(),
+    createdAt: user.createdAt || new Date().toISOString(),
   };
 };
 
@@ -203,87 +213,84 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
   const loadProjects = async () => {
     if (!user) return;
-    const projectResponse = await apiRequest<{ projects: Array<any> }>("/projects");
-    const normalizedProjects = await Promise.all(
-      projectResponse.projects.map(async (apiProject) => {
-        const projectId = apiProject._id.toString();
-        const [panelResponse, taskResponse] = await Promise.all([
-          apiRequest<{ panels: Array<any> }>(`/panels/project/${projectId}`),
-          apiRequest<{ tasks: Array<any> }>(`/tasks/project/${projectId}`),
-        ]);
+    // Single request returns all projects with panels and tasks embedded
+    const dashResponse = await apiRequest<{ projects: Array<any>; requests?: Array<any> }>("/projects/dashboard");
+    const normalizedProjects = (dashResponse.projects || []).map((apiProject: any) => {
+      const projectId = apiProject._id.toString();
+      const apiTasks = apiProject.tasks || [];
 
-        const tasksByPanel: Record<string, Task[]> = {};
-        const apiTasks = taskResponse.tasks || [];
-        apiTasks.forEach((apiTask: any, index: number) => {
-          const panelId = apiTask.panelId?.toString() || "";
-          const rawAttachments = Array.isArray(apiTask.attachments) && apiTask.attachments.length > 0
-            ? apiTask.attachments
-            : apiTask.attachmentFile
-              ? [apiTask.attachmentFile]
-              : [];
-          if (!tasksByPanel[panelId]) tasksByPanel[panelId] = [];
-          tasksByPanel[panelId].push({
-            id: apiTask._id.toString(),
-            title: apiTask.title,
-            description: apiTask.description || "",
-            status: mapTaskStatus(apiTask, user?.role),
-            priority: apiTask.priority || "medium",
-            assignee: apiTask.assignedDeveloper ? mapApiUser(apiTask.assignedDeveloper) : undefined,
-            reporter: apiTask.createdBy ? mapApiUser(apiTask.createdBy) : user,
-            panelId,
-            projectId,
-            dueDate: apiTask.deadline ? new Date(apiTask.deadline).toISOString() : undefined,
-            attachments: rawAttachments.map((attachment: any, attachmentIndex: number) =>
-              mapAttachment(attachment, attachmentIndex, projectId, apiTask._id.toString())
-            ),
-            comments: Array.isArray(apiTask.comments)
-              ? apiTask.comments.map((comment: any, commentIndex: number) => mapComment(comment, commentIndex))
-              : [],
-            subtasks: [],
-            order: typeof apiTask.order === "number" ? apiTask.order : index,
-            createdAt: apiTask.createdAt || new Date().toISOString(),
-            updatedAt: apiTask.updatedAt || new Date().toISOString(),
-          });
+      const tasksByPanel: Record<string, Task[]> = {};
+      apiTasks.forEach((apiTask: any, index: number) => {
+        const panelId = apiTask.panelId?.toString() || "";
+        const rawAttachments = Array.isArray(apiTask.attachments) && apiTask.attachments.length > 0
+          ? apiTask.attachments
+          : apiTask.attachmentFile ? [apiTask.attachmentFile] : [];
+        if (!tasksByPanel[panelId]) tasksByPanel[panelId] = [];
+        tasksByPanel[panelId].push({
+          id: apiTask._id.toString(),
+          title: apiTask.title,
+          description: apiTask.description || "",
+          status: mapTaskStatus(apiTask, user?.role),
+          priority: apiTask.priority || "medium",
+          assignee: apiTask.assignedDeveloper ? mapApiUser(apiTask.assignedDeveloper) : undefined,
+          reporter: apiTask.createdBy ? mapApiUser(apiTask.createdBy) : user,
+          panelId,
+          projectId,
+          dueDate: apiTask.deadline ? new Date(apiTask.deadline).toISOString() : undefined,
+          attachments: rawAttachments.map((attachment: any, attachmentIndex: number) =>
+            mapAttachment(attachment, attachmentIndex, projectId, apiTask._id.toString())
+          ),
+          comments: Array.isArray(apiTask.comments)
+            ? apiTask.comments.map((comment: any, commentIndex: number) => mapComment(comment, commentIndex))
+            : [],
+          subtasks: [],
+          order: typeof apiTask.order === "number" ? apiTask.order : index,
+          createdAt: apiTask.createdAt || new Date().toISOString(),
+          updatedAt: apiTask.updatedAt || new Date().toISOString(),
         });
+      });
 
-        const owner = apiProject.createdBy ? mapApiUser(apiProject.createdBy) : user;
-        const developerMembers = (apiProject.developers || []).map((dev: any) => ({
+      const owner = apiProject.createdBy ? mapApiUser(apiProject.createdBy) : user;
+      const developerMembers = (apiProject.developers || [])
+        .filter(Boolean)
+        .map((dev: any) => ({
           user: mapApiUser(dev),
           role: "member" as const,
           joinedAt: new Date().toISOString(),
         }));
-        const members = [{ user: owner, role: "owner" as const, joinedAt: new Date().toISOString() }, ...developerMembers];
-        const admins = (apiProject.admins || []).map((a: any) => mapApiUser(a));
+      const members = [{ user: owner, role: "owner" as const, joinedAt: new Date().toISOString() }, ...developerMembers];
+      const admins = (apiProject.admins || [])
+        .filter(Boolean)
+        .map((a: any) => mapApiUser(a));
 
-        return {
-          id: projectId,
-          name: apiProject.name,
-          description: apiProject.description || "",
-          githubRepository: apiProject.githubRepository || "",
-          status: apiProject.status || "active",
-          // starred = true when the current user's id is in the starredBy array
-          starred: Array.isArray(apiProject.starredBy)
-            ? apiProject.starredBy.some((uid: string) => uid === user?.id || uid?.toString() === user?.id)
-            : false,
-          owner,
-          members,
-          admins,
-          panels: (panelResponse.panels || []).map((p: any) => ({
-            id: p._id.toString(),
-            name: p.name,
-            order: p.order || 0,
-            projectId,
-            width: p.width || 320,
-            height: p.height || 520,
-            tasks: (tasksByPanel[p._id.toString()] || []).sort((a, b) => a.order - b.order),
-          })),
-          createdAt: apiProject.createdAt || new Date().toISOString(),
-          updatedAt: apiProject.updatedAt || new Date().toISOString(),
-        } as Project;
-      })
-    );
+      return {
+        id: projectId,
+        name: apiProject.name,
+        description: apiProject.description || "",
+        githubRepository: apiProject.githubRepository || "",
+        status: apiProject.status || "active",
+        starred: Array.isArray(apiProject.starredBy)
+          ? apiProject.starredBy.some((uid: string) => uid === user?.id || uid?.toString() === user?.id)
+          : false,
+        owner,
+        members,
+        admins,
+        panels: (apiProject.panels || []).map((p: any) => ({
+          id: p._id.toString(),
+          name: p.name,
+          order: p.order || 0,
+          projectId,
+          width: p.width || 320,
+          height: p.height || 520,
+          tasks: (tasksByPanel[p._id.toString()] || []).sort((a, b) => a.order - b.order),
+        })),
+        createdAt: apiProject.createdAt || new Date().toISOString(),
+        updatedAt: apiProject.updatedAt || new Date().toISOString(),
+      } as Project;
+    });
     setProjects(normalizedProjects);
   };
+
 
   const loadRequests = async () => {
     if (!user) return;
@@ -328,7 +335,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const loadNotifications = async () => {
     if (!user) return;
-    const response = await apiRequest<{ notifications: Array<any> }>("/notifications");
+    // Limit to 50 most recent — prevents loading hundreds of stale records
+    const response = await apiRequest<{ notifications: Array<any> }>("/notifications?limit=50");
     const nextNotifications = (response.notifications || []).map(mapNotification);
     const nextIds = new Set(nextNotifications.map((notification) => notification.id));
 
@@ -347,6 +355,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setNotifications(nextNotifications);
   };
 
+
   useEffect(() => {
     if (!user || typeof window === "undefined") return;
 
@@ -363,30 +372,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
     socket.on("notification:new", (payload: { notification?: any }) => {
       const notification = payload?.notification;
       if (!notification?._id) return;
-
       const mapped = mapNotification(notification);
       setNotifications((current) => {
         if (current.some((item) => item.id === mapped.id)) return current;
         return [mapped, ...current];
       });
       notificationIdsRef.current.add(mapped.id);
-      if (shouldPingZentrixa(mapped)) {
-        playZentrixaPing();
-      }
+      if (shouldPingZentrixa(mapped)) playZentrixaPing();
     });
 
     socket.on("request:new", (payload: { request?: any }) => {
       const request = payload?.request;
       if (!request?._id) return;
-
       const mapped = mapProjectRequest(request, user);
       setRequests((current) => {
         if (current.some((item) => item.id === mapped.id)) return current;
         return [mapped, ...current];
       });
-
       requestIdsRef.current.add(mapped.id);
       playInvitationSound(mapped.sender?.role);
+    });
+
+    // Reload project data when the backend signals any mutation.
+    // This replaces the 1-second setInterval polling loop — the server
+    // now pushes changes instead of the client continuously pulling.
+    socket.on("project:updated", () => {
+      void loadProjects();
     });
 
     return () => {
@@ -394,6 +405,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       socket.disconnect();
     };
   }, [user]);
+
 
   useEffect(() => {
     if (!user) {
@@ -410,32 +422,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
     let isMounted = true;
     setIsLoading(true);
 
-    const refresh = async () => {
+    const initialLoad = async () => {
       try {
+        // Load projects+panels+tasks in ONE request, requests and notifications in parallel
         await Promise.all([loadProjects(), loadRequests(), loadNotifications()]);
       } catch (error) {
-        if (isMounted) {
-          console.error("Failed to refresh dashboard data:", error);
-        }
+        if (isMounted) console.error("Failed to load dashboard data:", error);
       } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (isMounted) setIsLoading(false);
       }
     };
 
-    void refresh();
+    void initialLoad();
+    // No setInterval — the backend now emits 'project:updated' via Socket.IO
+    // whenever data changes, which triggers loadProjects() in the socket useEffect above.
 
-    const intervalDelay = 1000;
-    const interval = window.setInterval(() => {
-      void refresh();
-    }, intervalDelay);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(interval);
-    };
+    return () => { isMounted = false; };
   }, [user]);
+
 
   const createProject = async (data: CreateProjectData): Promise<Project> => {
     const response = await apiRequest<{ project: any }>("/projects", {
@@ -717,10 +721,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const toggleSubtask = async (taskId: string, subtaskId: string) => {
-    const task = projects
-      .flatMap((project) => project.panels)
-      .flatMap((panel) => panel.tasks)
-      .find((currentTask) => currentTask.id === taskId);
+    const task = getTaskById(taskId);
 
     if (!canUserModifyTask(user, task)) {
       throw new Error("You cannot modify tasks created by an admin.");
@@ -747,10 +748,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const addSubtask = async (taskId: string, title: string) => {
-    const task = projects
-      .flatMap((project) => project.panels)
-      .flatMap((panel) => panel.tasks)
-      .find((currentTask) => currentTask.id === taskId);
+    const task = getTaskById(taskId);
 
     if (!canUserModifyTask(user, task)) {
       throw new Error("You cannot modify tasks created by an admin.");
@@ -779,14 +777,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const sendInvitation = async (projectId: string, email: string, message?: string) => {
     if (!user) return;
-
-    const usersResponse = await apiRequest<{ users: Array<any> }>("/auth/users");
-    const developer = (usersResponse.users || []).find((u) => u.email === email);
-    if (!developer) throw new Error("Developer not found");
-
+    // Send email directly — backend resolves the developer internally.
+    // Previously this fetched all users just to find one by email.
     await apiRequest(`/projects/${projectId}/invite`, {
       method: "POST",
-      body: JSON.stringify({ developerId: developer._id, message }),
+      body: JSON.stringify({ email, message }),
     });
     await loadRequests();
   };

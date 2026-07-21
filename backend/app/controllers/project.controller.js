@@ -1,35 +1,23 @@
+import mongoose from 'mongoose';
 import Project from '../models/Project.js';
 import Panel from '../models/Panel.js';
 import Task from '../models/Task.js';
 import User from '../models/User.js';
 import ProjectRequest from '../models/ProjectRequest.js';
-import { emitToUser } from '../services/realtime.service.js';
+import { emitToUser, emitProjectUpdated } from '../services/realtime.service.js';
 
 // Get all projects for the current user
 export const getProjects = async (req, res) => {
   try {
-    let projects;
-    
-    if (req.user.role === 'admin') {
-      // Admin sees projects they created OR are added as an admin to
-      projects = await Project.find({
-        $or: [
-          { createdBy: req.userId },
-          { admins: req.userId }
-        ]
-      })
-        .populate('developers', 'name email')
-        .populate('admins', 'name email')
-        .populate('createdBy', 'name email')
-        .sort({ createdAt: -1 });
-    } else {
-      // Developers see only projects they're part of
-      projects = await Project.find({ developers: req.userId })
-        .populate('developers', 'name email')
-        .populate('admins', 'name email')
-        .populate('createdBy', 'name email')
-        .sort({ createdAt: -1 });
-    }
+    const filter = req.user.role === 'admin'
+      ? { $or: [{ createdBy: req.userId }, { admins: req.userId }] }
+      : { developers: req.userId };
+
+    const projects = await Project.find(filter)
+      .populate('developers', 'name email')
+      .populate('admins', 'name email')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 });
 
     res.json({ projects });
   } catch (error) {
@@ -51,6 +39,58 @@ export const getAllProjects = async (req, res) => {
   } catch (error) {
     console.error('Get all projects error:', error);
     res.status(500).json({ message: 'Error fetching all projects', error: error.message });
+  }
+};
+
+/**
+ * GET /api/projects/dashboard
+ * Returns all projects with their panels and tasks in a single query.
+ * Replaces the N+1 waterfall (1 project fetch + 2 per project = 2N+1 requests)
+ * with a single aggregated response.
+ */
+export const getDashboard = async (req, res) => {
+  try {
+    const filter = req.user.role === 'admin'
+      ? { $or: [{ createdBy: req.userId }, { admins: req.userId }] }
+      : { developers: req.userId };
+
+    const [projects, requests] = await Promise.all([
+      Project.find(filter)
+        .populate('developers', 'name email role avatar')
+        .populate('admins', 'name email role')
+        .populate('createdBy', 'name email role')
+        .populate('panels')
+        .lean(),
+      ProjectRequest.find({ developerId: req.userId, status: 'pending' })
+        .populate('projectId', 'name description')
+        .populate('senderId', 'name email')
+        .lean(),
+    ]);
+
+    const projectIds = projects.map(p => p._id);
+    const tasks = await Task.find({ projectId: { $in: projectIds } })
+      .populate('assignedDeveloper', 'name email')
+      .populate('createdBy', 'name email')
+      .lean();
+
+    // Group tasks by projectId in a single O(n) pass
+    const tasksByProject = {};
+    for (const task of tasks) {
+      if (task.projectId) {
+        const key = task.projectId.toString();
+        (tasksByProject[key] ||= []).push(task);
+      }
+    }
+
+    const enrichedProjects = projects.map(p => ({
+      ...p,
+      tasks: tasksByProject[p._id.toString()] || [],
+    }));
+
+    res.json({ projects: enrichedProjects, requests });
+  } catch (error) {
+    console.error('Get dashboard error:', error);
+    res.status(500).json({ message: 'Error fetching dashboard data', error: error.message });
   }
 };
 
@@ -85,34 +125,30 @@ export const createProject = async (req, res) => {
       createdBy: req.userId
     });
 
+    // Create panels first, then save project once with panel IDs (atomic single save)
+    const panelDocs = await Panel.insertMany(
+      panelsToCreate.map((panel, index) => ({
+        name: panel.name,
+        projectId: project._id,
+        description: panel.description || '',
+        order: index,
+        color: panel.color || '#007bff'
+      }))
+    );
+    project.panels = panelDocs.map(p => p._id);
+
+    // Single save — no gap between project creation and panel association
     await project.save();
 
-    // Create default panels if provided
-    if (panelsToCreate && panelsToCreate.length > 0) {
-      const panelDocs = await Panel.insertMany(
-        panelsToCreate.map((panel, index) => ({
-          name: panel.name,
-          projectId: project._id,
-          description: panel.description || '',
-          order: index,
-          color: panel.color || '#007bff'
-        }))
-      );
-
-      project.panels = panelDocs.map(p => p._id);
-      await project.save();
-    }
-
-    // Add project to admin's joined projects
-    await User.findByIdAndUpdate(req.userId, {
-      $addToSet: { joinedProjects: project._id }
-    });
-
-    const populatedProject = await Project.findById(project._id)
-      .populate('developers', 'name email')
-      .populate('admins', 'name email')
-      .populate('createdBy', 'name email')
-      .populate('panels');
+    // Add project to admin's joined projects (parallel with populated fetch)
+    const [populatedProject] = await Promise.all([
+      Project.findById(project._id)
+        .populate('developers', 'name email')
+        .populate('admins', 'name email')
+        .populate('createdBy', 'name email')
+        .populate('panels'),
+      User.findByIdAndUpdate(req.userId, { $addToSet: { joinedProjects: project._id } }),
+    ]);
 
     res.status(201).json({
       message: 'Project created successfully',
@@ -129,24 +165,40 @@ export const getProjectById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const project = await Project.findById(id)
-      .populate('developers', 'name email role')
-      .populate('admins', 'name email')
-      .populate('createdBy', 'name email')
-      .populate('panels');
+    // Fetch project and aggregate task stats in parallel — no full task documents needed
+    const [project, statsResult] = await Promise.all([
+      Project.findById(id)
+        .populate('developers', 'name email role')
+        .populate('admins', 'name email')
+        .populate('createdBy', 'name email')
+        .populate('panels'),
+      Task.aggregate([
+        { $match: { projectId: new mongoose.Types.ObjectId(id) } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            completed: { $sum: { $cond: ['$approvedByAdmin', 1, 0] } },
+            pending: { $sum: { $cond: [{ $not: ['$completedByDeveloper'] }, 1, 0] } },
+            inReview: {
+              $sum: {
+                $cond: [
+                  { $and: ['$completedByDeveloper', { $not: ['$approvedByAdmin'] }] },
+                  1, 0
+                ]
+              }
+            },
+          }
+        }
+      ])
+    ]);
 
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // Get task statistics
-    const tasks = await Task.find({ projectId: id });
-    const taskStats = {
-      total: tasks.length,
-      completed: tasks.filter(t => t.approvedByAdmin).length,
-      pending: tasks.filter(t => !t.completedByDeveloper).length,
-      inReview: tasks.filter(t => t.completedByDeveloper && !t.approvedByAdmin).length
-    };
+    const s = statsResult[0] || { total: 0, completed: 0, pending: 0, inReview: 0 };
+    const taskStats = { total: s.total, completed: s.completed, pending: s.pending, inReview: s.inReview };
 
     res.json({ project, taskStats });
   } catch (error) {
@@ -166,7 +218,6 @@ export const updateProject = async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // Check if user is admin who created the project
     if (project.createdBy.toString() !== req.userId.toString() && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Not authorized to update this project' });
     }
@@ -188,6 +239,7 @@ export const updateProject = async (req, res) => {
     if (status) project.status = status;
 
     await project.save();
+    emitProjectUpdated(project);
 
     const updatedProject = await Project.findById(id)
       .populate('developers', 'name email')
@@ -195,10 +247,7 @@ export const updateProject = async (req, res) => {
       .populate('createdBy', 'name email')
       .populate('panels');
 
-    res.json({
-      message: 'Project updated successfully',
-      project: updatedProject
-    });
+    res.json({ message: 'Project updated successfully', project: updatedProject });
   } catch (error) {
     console.error('Update project error:', error);
     res.status(500).json({ message: 'Error updating project', error: error.message });
@@ -209,44 +258,48 @@ export const updateProject = async (req, res) => {
 export const inviteDeveloper = async (req, res) => {
   try {
     const { id } = req.params;
-    const { developerId, userId, message } = req.body;
-    const targetDeveloperId = developerId || userId;
+    const { developerId, userId, email, message } = req.body;
+    let targetDeveloperId = developerId || userId;
 
     const project = await Project.findById(id);
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // Check if user is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Only admins can invite developers' });
     }
 
-    // Check if developer exists
-    if (!targetDeveloperId) {
-      return res.status(400).json({ message: 'Developer id is required' });
-    }
-
-    const developer = await User.findById(targetDeveloperId);
-    if (!developer || developer.role !== 'developer') {
-      return res.status(404).json({ message: 'Developer not found' });
+    // Support invite-by-email: frontend sends email, backend resolves the developer
+    let developer;
+    if (email && !targetDeveloperId) {
+      developer = await User.findOne({ email, role: 'developer' });
+      if (!developer) {
+        return res.status(404).json({ message: `No developer account found for ${email}` });
+      }
+      targetDeveloperId = developer._id;
+    } else {
+      if (!targetDeveloperId) {
+        return res.status(400).json({ message: 'Developer id or email is required' });
+      }
+      developer = await User.findById(targetDeveloperId);
+      if (!developer || developer.role !== 'developer') {
+        return res.status(404).json({ message: 'Developer not found' });
+      }
     }
 
     const projectDevelopers = Array.isArray(project.developers) ? project.developers : [];
-    const isAlreadyMember = projectDevelopers.some((memberId) => memberId.toString() === targetDeveloperId.toString());
+    const isAlreadyMember = projectDevelopers.some(
+      (memberId) => memberId.toString() === targetDeveloperId.toString()
+    );
     if (isAlreadyMember) {
       return res.status(409).json({ message: 'Developer is already in this project' });
     }
 
-    const existingRequest = await ProjectRequest.findOne({
-      projectId: id,
-      developerId: targetDeveloperId
-    });
-
+    const existingRequest = await ProjectRequest.findOne({ projectId: id, developerId: targetDeveloperId });
     if (existingRequest?.status === 'pending') {
       return res.status(409).json({ message: 'Invitation already exists for this developer' });
     }
-
     if (existingRequest) {
       await ProjectRequest.deleteOne({ _id: existingRequest._id });
     }
@@ -289,24 +342,19 @@ export const inviteDeveloper = async (req, res) => {
   }
 };
 
-// Add admin to project (admin only — grants another admin full project control)
+// Add admin to project (admin only)
 export const addAdminToProject = async (req, res) => {
   try {
     const { id } = req.params;
     const { adminId } = req.body;
 
-    if (!adminId) {
-      return res.status(400).json({ message: 'adminId is required' });
-    }
+    if (!adminId) return res.status(400).json({ message: 'adminId is required' });
 
     const project = await Project.findById(id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+    if (!project) return res.status(404).json({ message: 'Project not found' });
 
-    // Only the project creator or existing co-admins can add new admins
     const isCreator = project.createdBy.toString() === req.userId.toString();
-    const isCoAdmin = (project.admins || []).some((a) => a.toString() === req.userId.toString());
+    const isCoAdmin = (project.admins || []).some(a => a.toString() === req.userId.toString());
     if (!isCreator && !isCoAdmin) {
       return res.status(403).json({ message: 'Not authorized to add admins to this project' });
     }
@@ -316,23 +364,20 @@ export const addAdminToProject = async (req, res) => {
       return res.status(404).json({ message: 'Admin user not found' });
     }
 
-    // Cannot add the creator as a co-admin (already has full access)
     if (adminId.toString() === project.createdBy.toString()) {
       return res.status(400).json({ message: 'This user is already the project owner' });
     }
 
-    const alreadyAdmin = (project.admins || []).some((a) => a.toString() === adminId.toString());
+    const alreadyAdmin = (project.admins || []).some(a => a.toString() === adminId.toString());
     if (alreadyAdmin) {
       return res.status(409).json({ message: 'This admin is already added to the project' });
     }
 
     project.admins = [...(project.admins || []), adminId];
     await project.save();
+    emitProjectUpdated(project);
 
-    // Give the new admin access via joinedProjects so getProjects returns it
-    await User.findByIdAndUpdate(adminId, {
-      $addToSet: { joinedProjects: project._id }
-    });
+    await User.findByIdAndUpdate(adminId, { $addToSet: { joinedProjects: project._id } });
 
     res.json({ message: `${targetAdmin.name} added as project admin`, adminId });
   } catch (error) {
@@ -347,32 +392,26 @@ export const leaveProject = async (req, res) => {
     const { id } = req.params;
 
     const project = await Project.findById(id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+    if (!project) return res.status(404).json({ message: 'Project not found' });
 
-    // Check if developer is in project
     if (!project.developers.includes(req.userId)) {
       return res.status(400).json({ message: 'You are not a member of this project' });
     }
 
-    // Remove developer from project
     project.developers = project.developers.filter(
       dev => dev.toString() !== req.userId.toString()
     );
     await project.save();
 
-    // Remove project from user's joined projects
-    await User.findByIdAndUpdate(req.userId, {
-      $pull: { joinedProjects: id }
-    });
+    await Promise.all([
+      User.findByIdAndUpdate(req.userId, { $pull: { joinedProjects: id } }),
+      Task.updateMany(
+        { projectId: id, assignedDeveloper: req.userId },
+        { $unset: { assignedDeveloper: '' }, status: 'pending' }
+      ),
+    ]);
 
-    // Unassign developer from tasks in this project
-    await Task.updateMany(
-      { projectId: id, assignedDeveloper: req.userId },
-      { $unset: { assignedDeveloper: '' }, status: 'pending' }
-    );
-
+    emitProjectUpdated(project);
     res.json({ message: 'Successfully left the project' });
   } catch (error) {
     console.error('Leave project error:', error);
@@ -386,9 +425,7 @@ export const removeProjectMember = async (req, res) => {
     const { id, memberId } = req.params;
 
     const project = await Project.findById(id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+    if (!project) return res.status(404).json({ message: 'Project not found' });
 
     if (project.createdBy.toString() !== req.userId.toString()) {
       return res.status(403).json({ message: 'Not authorized to remove project members' });
@@ -404,33 +441,25 @@ export const removeProjectMember = async (req, res) => {
     }
 
     const projectDevelopers = Array.isArray(project.developers) ? project.developers : [];
-    const isMember = projectDevelopers.some((dev) => dev.toString() === memberId.toString());
+    const isMember = projectDevelopers.some(dev => dev.toString() === memberId.toString());
     if (!isMember) {
       return res.status(400).json({ message: 'User is not a member of this project' });
     }
 
-    project.developers = projectDevelopers.filter(
-      (dev) => dev.toString() !== memberId.toString()
-    );
+    project.developers = projectDevelopers.filter(dev => dev.toString() !== memberId.toString());
     await project.save();
 
-    await ProjectRequest.deleteMany({
-      projectId: id,
-      developerId: memberId
-    });
+    await Promise.all([
+      ProjectRequest.deleteMany({ projectId: id, developerId: memberId }),
+      User.findByIdAndUpdate(memberId, { $pull: { joinedProjects: id } }),
+      Task.updateMany(
+        { projectId: id, assignedDeveloper: memberId },
+        { $unset: { assignedDeveloper: '' }, status: 'pending' }
+      ),
+    ]);
 
-    await User.findByIdAndUpdate(memberId, {
-      $pull: { joinedProjects: id }
-    });
-
-    await Task.updateMany(
-      { projectId: id, assignedDeveloper: memberId },
-      { $unset: { assignedDeveloper: '' }, status: 'pending' }
-    );
-
-    res.json({
-      message: 'Project member removed successfully'
-    });
+    emitProjectUpdated(project);
+    res.json({ message: 'Project member removed successfully' });
   } catch (error) {
     console.error('Remove project member error:', error);
     res.status(500).json({ message: 'Error removing project member', error: error.message });
@@ -443,25 +472,21 @@ export const deleteProject = async (req, res) => {
     const { id } = req.params;
 
     const project = await Project.findById(id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+    if (!project) return res.status(404).json({ message: 'Project not found' });
 
-    // Check if user is admin who created the project
     if (project.createdBy.toString() !== req.userId.toString()) {
       return res.status(403).json({ message: 'Not authorized to delete this project' });
     }
 
-    // Delete all related data
-    await Panel.deleteMany({ projectId: id });
-    await Task.deleteMany({ projectId: id });
-    await ProjectRequest.deleteMany({ projectId: id });
+    // Notify members before deletion so socket event still resolves
+    emitProjectUpdated(project);
 
-    // Remove project from all users' joined projects
-    await User.updateMany(
-      { joinedProjects: id },
-      { $pull: { joinedProjects: id } }
-    );
+    await Promise.all([
+      Panel.deleteMany({ projectId: id }),
+      Task.deleteMany({ projectId: id }),
+      ProjectRequest.deleteMany({ projectId: id }),
+      User.updateMany({ joinedProjects: id }, { $pull: { joinedProjects: id } }),
+    ]);
 
     await Project.findByIdAndDelete(id);
 
@@ -472,37 +497,61 @@ export const deleteProject = async (req, res) => {
   }
 };
 
-// Get project statistics
+// Get project statistics (aggregation pipeline — no full document loading)
 export const getProjectStats = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const project = await Project.findById(id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+    const [project, statsResult] = await Promise.all([
+      Project.findById(id, 'developers progress'),
+      Task.aggregate([
+        { $match: { projectId: new mongoose.Types.ObjectId(id) } },
+        {
+          $group: {
+            _id: null,
+            totalTasks: { $sum: 1 },
+            completedTasks: { $sum: { $cond: ['$approvedByAdmin', 1, 0] } },
+            pendingTasks: { $sum: { $cond: [{ $not: ['$completedByDeveloper'] }, 1, 0] } },
+            inReviewTasks: {
+              $sum: {
+                $cond: [{ $and: ['$completedByDeveloper', { $not: ['$approvedByAdmin'] }] }, 1, 0]
+              }
+            },
+            urgent: { $sum: { $cond: [{ $eq: ['$priority', 'urgent'] }, 1, 0] } },
+            high:   { $sum: { $cond: [{ $eq: ['$priority', 'high'] }, 1, 0] } },
+            medium: { $sum: { $cond: [{ $eq: ['$priority', 'medium'] }, 1, 0] } },
+            low:    { $sum: { $cond: [{ $eq: ['$priority', 'low'] }, 1, 0] } },
+            statusPending:    { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+            statusInProgress: { $sum: { $cond: [{ $eq: ['$status', 'in-progress'] }, 1, 0] } },
+            statusReview:     { $sum: { $cond: [{ $eq: ['$status', 'review'] }, 1, 0] } },
+            statusCompleted:  { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+          }
+        }
+      ])
+    ]);
 
-    const tasks = await Task.find({ projectId: id });
-    
+    if (!project) return res.status(404).json({ message: 'Project not found' });
+
+    const s = statsResult[0] || {};
     const stats = {
-      totalTasks: tasks.length,
-      completedTasks: tasks.filter(t => t.approvedByAdmin).length,
-      pendingTasks: tasks.filter(t => !t.completedByDeveloper).length,
-      inReviewTasks: tasks.filter(t => t.completedByDeveloper && !t.approvedByAdmin).length,
+      totalTasks:      s.totalTasks      ?? 0,
+      completedTasks:  s.completedTasks  ?? 0,
+      pendingTasks:    s.pendingTasks    ?? 0,
+      inReviewTasks:   s.inReviewTasks   ?? 0,
       totalDevelopers: project.developers.length,
-      progress: project.progress,
+      progress:        project.progress,
       tasksByPriority: {
-        urgent: tasks.filter(t => t.priority === 'urgent').length,
-        high: tasks.filter(t => t.priority === 'high').length,
-        medium: tasks.filter(t => t.priority === 'medium').length,
-        low: tasks.filter(t => t.priority === 'low').length
+        urgent: s.urgent ?? 0,
+        high:   s.high   ?? 0,
+        medium: s.medium ?? 0,
+        low:    s.low    ?? 0,
       },
       tasksByStatus: {
-        pending: tasks.filter(t => t.status === 'pending').length,
-        inProgress: tasks.filter(t => t.status === 'in-progress').length,
-        review: tasks.filter(t => t.status === 'review').length,
-        completed: tasks.filter(t => t.status === 'completed').length
-      }
+        pending:    s.statusPending    ?? 0,
+        inProgress: s.statusInProgress ?? 0,
+        review:     s.statusReview     ?? 0,
+        completed:  s.statusCompleted  ?? 0,
+      },
     };
 
     res.json({ stats });
@@ -512,26 +561,22 @@ export const getProjectStats = async (req, res) => {
   }
 };
 
-// Toggle star on a project (any authenticated user who is a member or admin of the project)
+// Toggle star on a project
 export const toggleStar = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;
 
     const project = await Project.findById(id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+    if (!project) return res.status(404).json({ message: 'Project not found' });
 
     const alreadyStarred = (project.starredBy || []).some(
-      (uid) => uid.toString() === userId.toString()
+      uid => uid.toString() === userId.toString()
     );
 
     if (alreadyStarred) {
-      // Un-star
       await Project.findByIdAndUpdate(id, { $pull: { starredBy: userId } });
     } else {
-      // Star
       await Project.findByIdAndUpdate(id, { $addToSet: { starredBy: userId } });
     }
 

@@ -46,9 +46,10 @@ export default function ProjectPage() {
   }, [project, selectedTaskId]);
 
   useEffect(() => {
+    setShowSkeleton(true);
     const timer = window.setTimeout(() => setShowSkeleton(false), 420);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [params.id]);
 
   if (!project && !showSkeleton) {
     return (

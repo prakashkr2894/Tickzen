@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zentrixa-ai
+  namespace: tickzen
+  labels:
+    app: zentrixa-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zentrixa-ai
+  template:
+    metadata:
+      labels:
+        app: zentrixa-ai
+    spec:
+      containers:
+      - name: zentrixa-ai
+        image: prakash1142/zentrixa-ai:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+        resources:
+          requests:
+            cpu: 100m
+            memory: 500Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          failureThreshold: 20
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zentrixa-ai-service
+  namespace: tickzen
+spec:
+  selector:
+    app: zentrixa-ai
+  ports:
+  - protocol: TCP
+    port: 8001
+    targetPort: 8001
+  type: ClusterIP

@@ -2,12 +2,7 @@ import Task from '../models/Task.js';
 import Project from '../models/Project.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { emitProjectUpdated } from '../services/realtime.service.js';
 
 const mapUploadedFile = (file) => ({
   filename: file.filename,
@@ -254,9 +249,10 @@ export const createTask = async (req, res) => {
       sender: req.user
     });
 
-    // Update project task count
+    // Update project task count and notify all members
     project.totalTasks += 1;
     await project.updateProgress();
+    emitProjectUpdated(project);
 
     const populatedTask = await Task.findById(task._id)
       .populate('assignedDeveloper', 'name email')
@@ -321,15 +317,20 @@ export const updateTask = async (req, res) => {
       .populate('assignedDeveloper', 'name email')
       .populate('createdBy', 'name email');
 
+    // Notify all project members of the change
+    const proj = await Project.findById(task.projectId);
+    if (proj) emitProjectUpdated(proj);
+
     res.json({
       message: 'Task updated successfully',
       task: updatedTask
     });
-  } catch (error) {
+  } catch (error){
     console.error('Update task error:', error);
     res.status(500).json({ message: 'Error updating task', error: error.message });
   }
 };
+
 
 // Add comment to task
 export const addTaskComment = async (req, res) => {
@@ -401,6 +402,10 @@ export const completeTask = async (req, res) => {
       .populate('assignedDeveloper', 'name email')
       .populate('createdBy', 'name email');
 
+    // Notify all project members
+    const proj = await Project.findById(task.projectId);
+    if (proj) emitProjectUpdated(proj);
+
     res.json({
       message: 'Task marked as completed. Waiting for admin approval.',
       task: updatedTask
@@ -431,11 +436,12 @@ export const approveTask = async (req, res) => {
 
     await task.save();
 
-    // Update project progress
+    // Update project progress and notify all members
     const project = await Project.findById(task.projectId);
     if (project) {
       project.completedTasks += 1;
       await project.updateProgress();
+      emitProjectUpdated(project);
     }
 
     const updatedTask = await Task.findById(id)
@@ -473,6 +479,10 @@ export const rejectTask = async (req, res) => {
       .populate('assignedDeveloper', 'name email')
       .populate('createdBy', 'name email');
 
+    // Notify all project members
+    const proj = await Project.findById(task.projectId);
+    if (proj) emitProjectUpdated(proj);
+
     res.json({
       message: 'Task sent back for revisions',
       task: updatedTask,
@@ -497,7 +507,7 @@ export const deleteTask = async (req, res) => {
     // Delete attachment file if exists
     deleteStoredFiles(getTaskAttachments(task));
 
-    // Update project task count
+    // Update project task count and notify all members
     const project = await Project.findById(task.projectId);
     if (project) {
       project.totalTasks = Math.max(0, project.totalTasks - 1);
@@ -505,6 +515,7 @@ export const deleteTask = async (req, res) => {
         project.completedTasks = Math.max(0, project.completedTasks - 1);
       }
       await project.updateProgress();
+      emitProjectUpdated(project);
     }
 
     await Task.findByIdAndDelete(id);

@@ -15,6 +15,18 @@ const otpStore = new Map();
 const verifiedSignupStore = new Map();
 let googleClient;
 
+// Purge expired entries every 10 minutes to prevent unbounded memory growth.
+// Full Redis migration is the long-term solution for multi-pod deployments.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of otpStore) {
+    if (now > val.expires) otpStore.delete(key);
+  }
+  for (const [key, val] of verifiedSignupStore) {
+    if (now > val.expires) verifiedSignupStore.delete(key);
+  }
+}, 10 * 60 * 1000);
+
 const getRazorpayClient = () => {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_KEY_SECRET;

@@ -2,11 +2,16 @@ import Notification from '../models/Notification.js';
 
 export const getNotifications = async (req, res) => {
   try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 200);
+    const skip  = parseInt(req.query.skip) || 0;
+
     const notifications = await Notification.find({ userId: req.userId })
       .populate('senderId', 'name email role')
       .populate('taskId', 'title')
       .populate('projectId', 'name')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
     res.json({ notifications });
   } catch (error) {

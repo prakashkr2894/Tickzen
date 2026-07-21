@@ -2,7 +2,8 @@ version: "3.8"
 
 services:
   backend:
-    image: prakash1142/mean-backend
+    image: prakash1142/mean-backend:latest
+    container_name: backend
     restart: always
     ports:
       - "5500:5000"
@@ -18,12 +19,15 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
       RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET}
+      ZENTRIXA_AI_URL: http://zentrixa-ai:8001/zentrixa
     mem_limit: 400m
     networks:
       - app-network
+    depends_on:
+      - zentrixa-ai
 
   frontend:
-    image: prakash1142/mean-frontend
+    image: prakash1142/mean-frontend:latest
     container_name: frontend
     restart: always
     ports:
@@ -33,6 +37,16 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://backend:5000
     mem_limit: 250m
+    networks:
+      - app-network
+
+  zentrixa-ai:
+    image: prakash1142/zentrixa-ai:latest
+    container_name: zentrixa-ai
+    restart: always
+    ports:
+      - "8001:8001"
+    mem_limit: 1g
     networks:
       - app-network
 

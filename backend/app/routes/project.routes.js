@@ -3,6 +3,7 @@ import { body } from 'express-validator';
 import {
   getProjects,
   getAllProjects,
+  getDashboard,
   createProject,
   getProjectById,
   updateProject,
@@ -32,6 +33,9 @@ router.get('/', getProjects);
 
 // Get all projects (admin)
 router.get('/all', authorizeAdmin, getAllProjects);
+
+// Dashboard: all projects + panels + tasks in one request (replaces frontend N+1 polling)
+router.get('/dashboard', getDashboard);
 
 // Create new project (admin only)
 router.post('/', authorizeAdmin, validateProject, createProject);

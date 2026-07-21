@@ -24,9 +24,27 @@ const storage = multer.diskStorage({
   }
 });
 
-// File filter
+// Allowed MIME types
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain', 'text/csv', 'text/markdown',
+  'application/zip', 'application/x-zip-compressed',
+]);
+
+// File filter — rejects disallowed MIME types
 const fileFilter = (req, file, cb) => {
-  cb(null, true);
+  if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`File type "${file.mimetype}" is not allowed`), false);
+  }
 };
 
 // Create multer instance

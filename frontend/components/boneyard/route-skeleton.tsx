@@ -28,7 +28,7 @@ export function RouteSkeleton({ children }: { children: React.ReactNode }) {
     setIsAccessChecking(true);
     const timer = window.setTimeout(() => setIsAccessChecking(false), 180);
     return () => window.clearTimeout(timer);
-  }, [isProtected, isAuthLoading, user?.id]);
+  }, [isProtected, isAuthLoading, user?.id, pathname]);
 
   const hasAccess = !isProtected || user?.role === "admin";
   const isPaymentChecking = isAccessChecking;

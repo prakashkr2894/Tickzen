@@ -1,10 +1,12 @@
+import dotenv from 'dotenv';
+dotenv.config({ override: true });
+
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-// import dotenv from 'dotenv';
 import { Server as SocketIOServer } from 'socket.io';
 import authRoutes from './app/routes/auth.routes.js';
 import projectRoutes from './app/routes/project.routes.js';
@@ -26,51 +28,49 @@ import {
   unsubscribeSocketRoom
 } from './app/services/project-chat.service.js';
 import { setRealtimeServer } from './app/services/realtime.service.js';
+import { startKeepAlive } from './app/utils/keepalive.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const envPath = path.join(__dirname, '.env');
 
-// dotenv.config({ path: envPath });
+// ── Startup guards — fail fast if required secrets are missing ──────────────
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error('❌ MONGODB_URI is missing. Set it in your environment.');
+  process.exit(1);
+}
+
+if (!process.env.JWT_SECRET) {
+  console.error('❌ JWT_SECRET is missing. Set it in your environment.');
+  process.exit(1);
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 mongoose.set('bufferCommands', false);
 
 const app = express();
 const server = http.createServer(app);
-const io = new SocketIOServer(server, {
-  cors: {
-    origin: ['http://localhost:3000', 'http://localhost:4500'],
-    credentials: true
-  }
-});
 
+// Allowed origins: local dev + production domain(s) via env
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:4500')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: ALLOWED_ORIGINS,
+  credentials: true,
+};
+
+const io = new SocketIOServer(server, { cors: corsOptions });
 setRealtimeServer(io);
 
-// Middleware
-app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:4500'],
-  credentials: true
-}));
-app.use(express.json());
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-
-// Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Database connection
-const MONGODB_URI = process.env.MONGODB_URI;
-
-if (!MONGODB_URI) {
-  console.error("❌ MONGODB_URI is missing");
-  process.exit(1);
-}
-
-console.log("ENV CHECK:", {
-  MONGODB_URI: process.env.MONGODB_URI ? "FOUND ✅" : "MISSING ❌",
-  PORT: process.env.PORT
-});
-
-// API routes (must match frontend: NEXT_PUBLIC_API_BASE_URL + /auth, /projects, …)
+// API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', projectCollaborationRoutes);
@@ -85,19 +85,13 @@ app.get('/api/health', (req, res) => {
   const isMongoReady = mongoose.connection.readyState === 1;
   res.status(isMongoReady ? 200 : 503).json({
     status: isMongoReady ? 'OK' : 'DEGRADED',
-    message: isMongoReady
-      ? 'Server is running'
-      : 'Server is running but MongoDB is not connected',
+    message: isMongoReady ? 'Server is running' : 'MongoDB is not connected',
     database: isMongoReady ? 'connected' : 'disconnected',
   });
 });
 
 const sendSocketError = (socket, message) => {
-  try {
-    socket.emit('chat:error', { message });
-  } catch {
-    // ignore socket failures
-  }
+  try { socket.emit('chat:error', { message }); } catch { /* ignore */ }
 };
 
 io.on('connection', async (socket) => {
@@ -126,11 +120,7 @@ io.on('connection', async (socket) => {
       return;
     }
 
-    const roomKey = getChatRoomKey({
-      projectId,
-      conversationWith,
-      userId: user._id.toString()
-    });
+    const roomKey = getChatRoomKey({ projectId, conversationWith, userId: user._id.toString() });
 
     subscribeSocketRoom(roomKey, socket);
     socket.join(roomKey);
@@ -163,9 +153,7 @@ io.on('connection', async (socket) => {
           user,
           mentionedUserIds: Array.isArray(payload?.mentionedUserIds) ? payload.mentionedUserIds : []
         });
-        socket.emit('chat:message:ack', {
-          messageId: result.message._id.toString()
-        });
+        socket.emit('chat:message:ack', { messageId: result.message._id.toString() });
       } catch (error) {
         sendSocketError(socket, error.message || 'Invalid chat payload');
       }
@@ -180,24 +168,21 @@ io.on('connection', async (socket) => {
   }
 });
 
-// Error handling middleware
+// Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: 'Something went wrong!', error: err.message });
 });
 
-// Default 5000 — match frontend/next.config.mjs BACKEND_URL; override with PORT in .env
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
-    await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
-    });
-    console.log('Connected to MongoDB');
-
+    await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+    console.log('✅ Connected to MongoDB');
+    startKeepAlive();
     server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      console.log(`🚀 Server running on port ${PORT}`);
     });
   } catch (error) {
     console.error('MongoDB connection error:', error);

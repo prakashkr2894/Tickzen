@@ -38,6 +38,9 @@ const panelSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Index: panel lookups are always filtered by projectId and sorted by order
+panelSchema.index({ projectId: 1, order: 1 });
+
 const Panel = mongoose.model('Panel', panelSchema);
 
 export default Panel;

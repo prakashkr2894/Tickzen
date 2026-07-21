@@ -5,8 +5,6 @@ import ProjectChatMessage from '../models/ProjectChatMessage.js';
 import Notification from '../models/Notification.js';
 import { emitToRoom, emitToUser } from './realtime.service.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
-
 const typingState = new Map();
 const chatRoomSubscribers = new Map();
 
@@ -102,7 +100,7 @@ export const parseChatToken = async (token) => {
   if (!token) return null;
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.userId).select('-password');
     return user || null;
   } catch {

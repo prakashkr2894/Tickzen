@@ -2,7 +2,6 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import TrialAdmin from '../models/TrialAdmin.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
 
 export const authenticate = async (req, res, next) => {
   try {
@@ -14,7 +13,7 @@ export const authenticate = async (req, res, next) => {
 
     const token = authHeader.split(' ')[1];
     
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     let user = await User.findById(decoded.userId).select('-password');
     if (!user) {
       user = await TrialAdmin.findById(decoded.userId).select('-password');
@@ -66,5 +65,5 @@ export const authorizeDeveloper = (req, res, next) => {
 };
 
 export const generateToken = (userId) => {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '7d' });
 };

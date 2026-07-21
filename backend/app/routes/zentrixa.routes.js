@@ -28,9 +28,15 @@ import User from '../models/User.js';
 import multer from 'multer';
 import { AssemblyAI } from 'assemblyai';
 import fs from 'fs';
+import {
+  escapeRegExp,
+  normalize as normalizeWhitespace,
+  buildRegex,
+  createMockRes,
+  runController,
+} from '../utils/zentrixa-helpers.js';
 
 const upload = multer({ dest: 'uploads/' });
-
 const router = express.Router();
 
 router.post('/', async (req, res) => {
@@ -92,31 +98,6 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
   }
 });
 
-function createMockRes() {
-  const state = {
-    statusCode: 200,
-    body: null,
-  };
-
-  return {
-    status(code) {
-      state.statusCode = code;
-      return this;
-    },
-    json(payload) {
-      state.body = payload;
-      return this;
-    },
-    getState() {
-      return state;
-    },
-  };
-}
-
-const escapeRegExp = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const normalizeWhitespace = (value = '') => value.replace(/\s+/g, ' ').trim();
-
 const extractTaskTitleHint = (text = '') => {
   const normalized = normalizeWhitespace(text.toLowerCase());
   const patterns = [
@@ -156,8 +137,6 @@ const mapTaskCandidate = (task) => ({
   status: task.status,
 });
 
-const buildRegex = (value = '') => new RegExp(escapeRegExp(normalizeWhitespace(value)), 'i');
-
 const resolveProjectByName = async (projectName) => {
   if (!projectName) return null;
   return Project.findOne({ name: buildRegex(projectName) });
@@ -172,9 +151,7 @@ const resolveTasksByName = async ({ taskName, projectId }) => {
   const query = {};
   if (taskName) query.title = buildRegex(taskName);
   if (projectId) query.projectId = projectId;
-
   if (Object.keys(query).length === 0) return [];
-
   return Task.find(query)
     .populate('projectId', 'name')
     .populate('assignedDeveloper', 'name email')
@@ -184,22 +161,14 @@ const resolveTasksByName = async ({ taskName, projectId }) => {
 
 const resolveTodoPanelId = async (projectId) => {
   if (!projectId) return null;
-
   const panels = await Panel.find({ projectId }).sort({ order: 1 });
   if (panels.length === 0) return null;
-
   const todoPanel = panels.find((panel) =>
     /(^|\b)(to\s*do|todo|pending|backlog)(\b|$)/i.test(panel.name)
   );
-
   return (todoPanel || panels[0])._id;
 };
 
-async function runController(controller, req) {
-  const mockRes = createMockRes();
-  await controller(req, mockRes);
-  return mockRes.getState();
-}
 
 router.post('/dispatch', async (req, res) => {
   try {
@@ -849,15 +818,6 @@ router.get('/actions', (_req, res) => {
     'update_deadline',
     'create_panel',
   ]);
-});
-
-/**
- * POST /zentrixa/action
- * Alias for /dispatch — used by the voice-action hook.
- */
-router.post('/action', async (req, res, next) => {
-  req.url = '/dispatch';
-  next('route');
 });
 
 export default router;

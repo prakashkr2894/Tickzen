@@ -117,9 +117,10 @@ const taskSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for efficient queries
+// Compound indexes for the most frequent query patterns
 taskSchema.index({ projectId: 1, status: 1 });
 taskSchema.index({ assignedDeveloper: 1, status: 1 });
+taskSchema.index({ panelId: 1, order: 1 });
 
 const Task = mongoose.model('Task', taskSchema);
 
