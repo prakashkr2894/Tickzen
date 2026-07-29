@@ -38,6 +38,8 @@ interface DataContextType {
   addAdminToProject: (projectId: string, adminId: string) => Promise<void>;
   /** Toggle the current user's star on a project. Updates optimistically. */
   toggleStarProject: (projectId: string) => Promise<void>;
+  /** Force a full reload of projects/panels/tasks from the server. */
+  refreshProjects: () => Promise<void>;
 }
 
 interface CreateProjectData {
@@ -888,6 +890,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         getMyTasks,
         addAdminToProject,
         toggleStarProject,
+        refreshProjects: loadProjects,
       }}
     >
       {children}

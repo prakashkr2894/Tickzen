@@ -15,7 +15,7 @@ export interface ZentrixaAiRingProps {
 export function ZentrixaAiRing({
   mode,
   micScale = 1,
-  size = 200,
+  size = 128,
   className,
 }: ZentrixaAiRingProps) {
   return (

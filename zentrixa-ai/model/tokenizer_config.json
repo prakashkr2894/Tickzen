@@ -1,3 +1,14 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:c5e19a8504461b09408a8d30aa9411ea95ddd07c18dec628a79cac6b5722739d
-size 336
+{
+  "backend": "tokenizers",
+  "cls_token": "[CLS]",
+  "do_lower_case": true,
+  "is_local": false,
+  "mask_token": "[MASK]",
+  "model_max_length": 512,
+  "pad_token": "[PAD]",
+  "sep_token": "[SEP]",
+  "strip_accents": null,
+  "tokenize_chinese_chars": true,
+  "tokenizer_class": "BertTokenizer",
+  "unk_token": "[UNK]"
+}

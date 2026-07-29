@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { AppHeader } from "@/components/layout/app-header";
 import { RouteScrollRestorer } from "@/components/layout/route-scroll-restorer";
+import { PageTransition } from "@/components/layout/page-transition";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { ZentrixaAssistant } from "@/components/zentrixa/ZentrixaAssistant";
 
@@ -42,8 +43,10 @@ export default function DashboardLayout({
         <AppHeader />
         <RouteScrollRestorer />
         <main className="relative min-w-0 flex-1 p-4 transition-[padding] duration-200 ease-out sm:p-6 lg:p-8">
-          {children}
-        </main>
+            <PageTransition>
+              {children}
+            </PageTransition>
+          </main>
         <ZentrixaAssistant />
       </SidebarInset>
     </SidebarProvider>

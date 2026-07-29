@@ -5,6 +5,7 @@ import { format, parseISO } from "date-fns";
 import { apiRequest, getSocketIoBaseUrl, getToken } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useData } from "@/lib/data-context";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar, MessageSquare, Send, Video, Users, Plus, Link2, Copy } from "lucide-react";
+import { Calendar, MessageSquare, Search, Send, Video, Users, Plus, Link2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import type { Meeting, Project, ChatMessage, User } from "@/lib/types";
 import { playProjectChatSound } from "@/lib/notification-sounds";
@@ -92,10 +93,13 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
   const [typingUsers, setTypingUsers] = useState<Array<{ senderId: string; senderName: string }>>([]);
   const [messageContent, setMessageContent] = useState("");
   const [meetingTitle, setMeetingTitle] = useState("");
-  const [meetingDate, setMeetingDate] = useState("");
+  const [meetingDate, setMeetingDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [meetingTime, setMeetingTime] = useState("");
   const [meetingNotes, setMeetingNotes] = useState("");
   const [meetingLink, setMeetingLink] = useState("");
+  const [meetingLinkInput, setMeetingLinkInput] = useState("");
+  const [showLinkPastePrompt, setShowLinkPastePrompt] = useState(false);
+  const [dateMode, setDateMode] = useState<"today" | "tomorrow" | "pick" | "">("today");
   const [chatHistoryHeight, setChatHistoryHeight] = useState(260);
   const [isSending, setIsSending] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
@@ -536,16 +540,17 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
           title: meetingTitle,
           scheduledFor: new Date(`${meetingDate}T${meetingTime}:00`).toISOString(),
           notes: meetingNotes,
+          meetingLink: meetingLinkInput.trim(),
         }),
       });
       setMeetingTitle("");
       setMeetingDate("");
       setMeetingTime("");
       setMeetingNotes("");
+      setMeetingLinkInput("");
+      setDateMode("today");
       const response = await apiRequest<{ meetings: Array<any> }>(`/projects/${project.id}/meetings`);
       setMeetings((response.meetings || []).map(mapMeeting));
-      setMeetingLink("https://meet.google.com/new");
-      window.open("https://meet.google.com/new", "_blank", "noopener,noreferrer");
       toast.success("Meeting scheduled");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to schedule meeting";
@@ -556,20 +561,20 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
   };
 
   const handleCreateMeeting = () => {
-    const url = "https://meet.google.com/new";
-    setMeetingLink(url);
-    window.open(url, "_blank", "noopener,noreferrer");
-    toast.success("Google Meet opened. Use the link below to share it.");
+    window.open("https://meet.google.com/new", "_blank", "noopener,noreferrer");
+    setShowLinkPastePrompt(true);
+    toast.success("Google Meet opened — paste the link below once your meeting room loads.");
   };
 
   const handlePostMeetingLink = async () => {
-    if (!meetingLink.trim()) return;
+    const link = meetingLinkInput.trim() || meetingLink.trim();
+    if (!link) return;
 
     try {
       await apiRequest(`/projects/${project.id}/chat`, {
         method: "POST",
         body: JSON.stringify({
-          content: `Meeting link: ${meetingLink}`,
+          content: `📅 Meeting link: ${link}`,
           recipientId: undefined,
         }),
       });
@@ -581,8 +586,9 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
   };
 
   const copyMeetingLink = async () => {
-    if (!meetingLink) return;
-    await navigator.clipboard.writeText(meetingLink);
+    const link = meetingLinkInput.trim() || meetingLink.trim();
+    if (!link) return;
+    await navigator.clipboard.writeText(link);
     toast.success("Meeting link copied");
   };
 
@@ -642,49 +648,88 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
   };
 
   return (
-    <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,420px)]">
-      <Card className="relative min-w-0 overflow-hidden border-border/60">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessageSquare className="h-5 w-5" />
-            Project Chat
-          </CardTitle>
+    <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+      {/* ── Left Column: Project Chat Workspace ── */}
+      <Card className="relative min-w-0 overflow-hidden border-border/70 bg-card/80 backdrop-blur-xl shadow-xl rounded-3xl flex flex-col">
+        <CardHeader className="border-b border-border/50 pb-4 pt-5 px-5 sm:px-6 flex flex-row items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20 shadow-inner">
+              <MessageSquare className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <CardTitle className="text-lg sm:text-xl font-extrabold tracking-tight text-foreground flex items-center gap-2 truncate">
+                Project Chat
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground truncate">
+                {conversationWith === PUBLIC_CHAT
+                  ? "Public project channel for all team members"
+                  : `Private channel with ${selectedMember?.user.firstName} ${selectedMember?.user.lastName}`}
+              </CardDescription>
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 rounded-full border-border/60 text-xs font-medium bg-background/60 hover:bg-background shadow-xs shrink-0"
+            onClick={() => setChatFinderOpen(true)}
+          >
+            <Search className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="hidden sm:inline">Search</span>
+            <kbd className="hidden sm:inline-flex h-4 items-center rounded border border-border bg-muted px-1 text-[9px] font-semibold text-muted-foreground">
+              ⌘F
+            </kbd>
+          </Button>
         </CardHeader>
-        <div className="project-chat-label px-6 text-sm font-medium text-muted-foreground">
-          Project chat
-        </div>
-      <CardContent className="min-w-0 space-y-4 xl:pr-[21rem]">
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
+
+        <CardContent className="flex flex-col min-w-0 p-4 sm:p-6 space-y-4 flex-1">
+          {/* ── Teammates & Conversation Selector ── */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
               <Button
                 type="button"
                 variant={conversationWith === PUBLIC_CHAT ? "default" : "outline"}
                 size="sm"
-                className="shrink-0"
+                className={cn(
+                  "h-9 rounded-full px-4 text-xs font-semibold transition-all shrink-0",
+                  conversationWith === PUBLIC_CHAT
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "border-border/60 bg-background/60 hover:bg-background"
+                )}
                 onClick={() => setConversationWith(PUBLIC_CHAT)}
               >
+                <Users className="mr-1.5 h-3.5 w-3.5" />
                 Everyone
                 {publicMentionUnreadCount > 0 && (
-                  <span className="ml-2 inline-flex h-2.5 w-2.5 rounded-full bg-destructive" />
+                  <span className="ml-2 inline-flex h-2 w-2 rounded-full bg-destructive animate-pulse" />
                 )}
               </Button>
+
               {selectedMember && conversationWith !== PUBLIC_CHAT && (
                 <Button
                   type="button"
                   variant="default"
                   size="sm"
-                  className="shrink-0"
+                  className="h-9 rounded-full px-4 text-xs font-semibold bg-primary text-primary-foreground shadow-md shrink-0"
                   onClick={() => setConversationWith(selectedMember.user.id)}
                 >
+                  <Avatar className="mr-1.5 h-4 w-4">
+                    <AvatarFallback className="text-[9px] bg-primary-foreground/20 text-primary-foreground">
+                      {selectedMember.user.firstName.charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
                   {selectedMember.user.firstName} {selectedMember.user.lastName}
                   {selectedMemberUnreadCount > 0 && (
-                    <span className="ml-2 inline-flex h-2.5 w-2.5 rounded-full bg-destructive" />
+                    <span className="ml-2 inline-flex h-2 w-2 rounded-full bg-destructive animate-pulse" />
                   )}
                 </Button>
               )}
             </div>
 
-            <div className="relative">
+            {/* Teammate Search Dropdown */}
+            <div className="relative w-full sm:w-64 shrink-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
               <Input
                 value={memberSearch}
                 onChange={(e) => {
@@ -695,10 +740,11 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
                 onBlur={() => {
                   window.setTimeout(() => setMemberSearchOpen(false), 150);
                 }}
-                placeholder="Search teammates for a private chat..."
+                placeholder="Direct message teammate..."
+                className="h-9 rounded-full border-border/60 bg-background/60 pl-9 text-xs placeholder:text-muted-foreground/70 focus-visible:ring-primary/40"
               />
               {memberSearchOpen && memberSearch.trim() && visibleMembers.length > 0 && (
-                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-56 overflow-y-auto rounded-xl border bg-background shadow-lg">
+                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 max-h-60 overflow-y-auto rounded-2xl border border-border/80 bg-popover/95 p-1 shadow-2xl backdrop-blur-xl">
                   {visibleMembers.map((member) => {
                     const isUnread = notifications.some(
                       (notification) =>
@@ -711,7 +757,7 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
                       <button
                         key={member.user.id}
                         type="button"
-                        className="flex w-full items-center gap-3 px-3 py-2 text-left transition hover:bg-muted/60"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-muted/70"
                         onMouseDown={(event) => {
                           event.preventDefault();
                           setConversationWith(member.user.id);
@@ -719,23 +765,26 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
                           setMemberSearchOpen(false);
                         }}
                       >
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback className="text-xs">
+                        <Avatar className="h-8 w-8 border border-border/50">
+                          <AvatarFallback className="text-xs font-semibold bg-primary/10 text-primary">
                             {member.user.firstName.charAt(0)}
                             {member.user.lastName.charAt(0)}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-medium">
+                            <span className="truncate text-xs font-bold text-foreground">
                               {member.user.firstName} {member.user.lastName}
                             </span>
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 capitalize">
+                              {member.user.role}
+                            </Badge>
                             {isUnread && (
-                              <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-primary" />
+                              <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-primary animate-pulse" />
                             )}
                           </div>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {member.user.email} · {member.user.role}
+                          <p className="truncate text-[10px] text-muted-foreground">
+                            {member.user.email}
                           </p>
                         </div>
                       </button>
@@ -744,161 +793,162 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
                 </div>
               )}
               {memberSearchOpen && memberSearch.trim() && visibleMembers.length === 0 && (
-                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 rounded-xl border bg-background p-3 text-sm text-muted-foreground shadow-lg">
+                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 rounded-2xl border border-border/80 bg-popover/95 p-3 text-xs text-muted-foreground shadow-2xl backdrop-blur-xl">
                   No teammates match your search.
                 </div>
               )}
             </div>
           </div>
 
-          <div ref={chatViewportWrapperRef}>
-            <ScrollArea style={{ height: `${chatHistoryHeight}px` }} className="max-w-full rounded-lg border bg-background/50">
-            <div className="space-y-3 p-4">
-              {messages.map((message) => {
-                const isMine = message.sender.id === user?.id;
-                return (
-                  <div
-                    key={message.id}
-                    ref={(node) => {
-                      messageRefs.current.set(message.id, node);
-                    }}
-                    className={`flex gap-3 ${isMine ? "justify-end" : ""}`}
-                  >
-                    {!isMine && (
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="text-xs">
+          {/* ── Chat Messages Stream Box ── */}
+          <div ref={chatViewportWrapperRef} className="relative flex-1 rounded-2xl border border-border/60 bg-muted/20 overflow-hidden shadow-inner">
+            <ScrollArea style={{ height: `${chatHistoryHeight}px` }} className="w-full">
+              <div className="space-y-4 p-4 sm:p-5">
+                {messages.map((message) => {
+                  const isMine = message.sender.id === user?.id;
+                  return (
+                    <div
+                      key={message.id}
+                      ref={(node) => {
+                        messageRefs.current.set(message.id, node);
+                      }}
+                      className={`flex items-start gap-3 ${isMine ? "flex-row-reverse" : "flex-row"}`}
+                    >
+                      <Avatar className="h-8 w-8 shrink-0 mt-0.5 border border-border/50 shadow-xs">
+                        <AvatarFallback className={cn("text-xs font-bold", isMine ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>
                           {message.sender.firstName.charAt(0)}
                           {message.sender.lastName.charAt(0)}
                         </AvatarFallback>
                       </Avatar>
-                    )}
-                    <div className={`max-w-[85%] rounded-2xl border px-3 py-2 sm:max-w-[80%] ${isMine ? "bg-primary text-primary-foreground" : "bg-muted/50"}`}>
-                      <div className="flex items-center gap-2 text-xs opacity-80">
-                        <span className="font-medium">
-                          {isMine ? "You" : `${message.sender.firstName} ${message.sender.lastName}`}
-                        </span>
-                        {message.recipient && (
-                          <Badge variant="outline" className="text-[10px]">
-                            Private to {message.recipient.firstName}
-                          </Badge>
-                        )}
-                        <span>{format(parseISO(message.createdAt), "MMM d, h:mm a")}</span>
+
+                      <div className={`flex flex-col max-w-[85%] sm:max-w-[75%] ${isMine ? "items-end" : "items-start"}`}>
+                        <div className="flex items-center gap-2 mb-1 px-1 text-[11px] text-muted-foreground">
+                          <span className="font-semibold text-foreground/90">
+                            {isMine ? "You" : `${message.sender.firstName} ${message.sender.lastName}`}
+                          </span>
+                          {message.recipient && (
+                            <Badge variant="secondary" className="text-[9px] px-1.5 py-0 font-medium">
+                              Private to {message.recipient.firstName}
+                            </Badge>
+                          )}
+                          <span className="text-[10px] opacity-70">
+                            {format(parseISO(message.createdAt), "h:mm a")}
+                          </span>
+                        </div>
+
+                        <div
+                          className={cn(
+                            "rounded-2xl px-4 py-2.5 text-xs sm:text-sm leading-relaxed shadow-xs transition-all",
+                            isMine
+                              ? "bg-primary text-primary-foreground rounded-tr-xs font-normal"
+                              : "bg-card border border-border/70 text-foreground rounded-tl-xs shadow-xs"
+                          )}
+                        >
+                          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                        </div>
                       </div>
-                      <p className="mt-1 text-sm whitespace-pre-wrap">{message.content}</p>
                     </div>
-                    {isMine && (
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="text-xs">
-                          {user?.firstName?.charAt(0) || "Y"}
-                          {user?.lastName?.charAt(0) || "U"}
-                        </AvatarFallback>
-                      </Avatar>
-                    )}
+                  );
+                })}
+
+                {messages.length === 0 && (
+                  <div className="py-16 text-center text-xs sm:text-sm text-muted-foreground flex flex-col items-center justify-center gap-2">
+                    <MessageSquare className="h-8 w-8 opacity-30 text-primary mb-1" />
+                    <p className="font-semibold">No messages in this channel yet.</p>
+                    <p className="text-xs text-muted-foreground/70">Send a message or @mention a teammate to start collaborating!</p>
                   </div>
-                );
-              })}
-              {messages.length === 0 && (
-                <div className="py-10 text-center text-sm text-muted-foreground">
-                  No messages yet. Start the conversation.
-                </div>
-              )}
-            </div>
+                )}
+              </div>
             </ScrollArea>
+
+            {/* Resize Handle */}
+            <button
+              type="button"
+              onPointerDown={startChatResize}
+              className="absolute bottom-1 right-1 h-5 w-5 cursor-nwse-resize rounded-md border border-border/60 bg-background/80 opacity-70 shadow-xs transition hover:opacity-100"
+              aria-label="Resize project chat"
+              title="Drag to resize chat height"
+            >
+              <div className="absolute bottom-1 right-1 h-1.5 w-1.5 border-r-2 border-b-2 border-muted-foreground" />
+            </button>
           </div>
 
+          {/* Typing Indicator */}
           {typingUsers.length > 0 && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-primary" />
-              <span>
+            <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground animate-fadeIn">
+              <span className="inline-flex h-2 w-2 animate-ping rounded-full bg-primary" />
+              <span className="font-medium text-primary">
                 {typingUsers.map((typingUser) => typingUser.senderName).join(", ")}
                 {typingUsers.length === 1 ? " is typing..." : " are typing..."}
               </span>
             </div>
           )}
 
-          <button
-            type="button"
-            onPointerDown={startChatResize}
-            className="absolute bottom-2 right-2 h-5 w-5 cursor-nwse-resize rounded-md border border-border/60 bg-background/90 opacity-80 shadow-sm transition hover:opacity-100"
-            aria-label="Resize project chat"
-            title="Drag to resize chat height"
-          >
-            <div className="absolute bottom-1 right-1 h-1.5 w-1.5 border-r-2 border-t-2 border-muted-foreground" />
-          </button>
-
-          <div className="min-w-0 space-y-3 rounded-2xl border border-border/70 bg-background/90 p-4 shadow-lg backdrop-blur-sm xl:absolute xl:right-4 xl:top-[6.25rem] xl:w-80">
-            <div className="rounded-xl border bg-muted/20 p-3">
-              <p className="text-sm font-medium max-[767px]:text-[1rem]">
-                {conversationWith === PUBLIC_CHAT
-                  ? "Public project chat"
-                  : `Private chat with ${selectedMember?.user.firstName} ${selectedMember?.user.lastName}`}
-              </p>
-              {conversationWith !== PUBLIC_CHAT && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Private messages also create an instant notification for the recipient.
-                </p>
-              )}
+          {/* ── Chat Input Bar ── */}
+          <div className="relative pt-1">
+            <div className="flex min-w-0 items-center gap-2 rounded-2xl border border-border/70 bg-background/80 p-1.5 shadow-md backdrop-blur-md focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+              <Input
+                value={messageContent}
+                onChange={(e) => setMessageContent(e.target.value)}
+                placeholder={
+                  conversationWith === PUBLIC_CHAT
+                    ? "Type your message or @name to mention..."
+                    : `Private message to ${selectedMember?.user.firstName}...`
+                }
+                className="min-w-0 flex-1 border-0 bg-transparent px-3 text-xs sm:text-sm placeholder:text-muted-foreground/60 focus-visible:ring-0"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleSendMessage();
+                  }
+                }}
+              />
+              <Button
+                onClick={handleSendMessage}
+                disabled={isSending || !messageContent.trim()}
+                size="sm"
+                className="h-9 rounded-xl px-4 text-xs font-bold shadow-sm transition-all shrink-0"
+              >
+                <Send className="h-3.5 w-3.5 mr-1.5" />
+                <span>Send</span>
+              </Button>
             </div>
-            <div className="relative">
-              <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
-                <Input
-                  value={messageContent}
-                  onChange={(e) => setMessageContent(e.target.value)}
-                  placeholder="Write a message..."
-                  className="min-w-0 flex-1"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void handleSendMessage();
-                    }
-                  }}
-                />
-                <Button
-                  onClick={handleSendMessage}
-                  disabled={isSending || !messageContent.trim()}
-                  className="w-full sm:w-auto max-[767px]:text-[1rem]"
-                >
-                  <Send className="mr-2 h-4 w-4 max-[767px]:h-5 max-[767px]:w-5" />
-                  Send
-                </Button>
-              </div>
 
-              {mentionSuggestions.length > 0 && (
-                <div className="absolute bottom-full left-0 z-30 mb-2 w-full overflow-hidden rounded-xl border bg-background shadow-lg">
-                  {mentionSuggestions.map((member) => (
-                    <button
-                      key={member.user.id}
-                      type="button"
-                      className="flex w-full items-center gap-3 px-3 py-2 text-left transition hover:bg-muted/60"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        insertMention(member.user.id);
-                      }}
-                    >
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="text-xs">
-                          {member.user.firstName.charAt(0)}
-                          {member.user.lastName.charAt(0)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium">
-                            {member.user.firstName} {member.user.lastName}
-                          </span>
-                          <Badge variant="secondary" className="text-[10px] capitalize">
-                            {member.user.role}
-                          </Badge>
-                        </div>
-                        <p className="truncate text-xs text-muted-foreground">{member.user.email}</p>
+            {/* Mention Suggestions Popup */}
+            {mentionSuggestions.length > 0 && (
+              <div className="absolute bottom-full left-0 z-30 mb-2 w-full max-w-sm overflow-hidden rounded-2xl border border-border/80 bg-popover/95 p-1 shadow-2xl backdrop-blur-xl">
+                {mentionSuggestions.map((member) => (
+                  <button
+                    key={member.user.id}
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-muted/70"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      insertMention(member.user.id);
+                    }}
+                  >
+                    <Avatar className="h-7 w-7 border border-border/50">
+                      <AvatarFallback className="text-[10px] font-bold bg-primary/10 text-primary">
+                        {member.user.firstName.charAt(0)}
+                        {member.user.lastName.charAt(0)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-xs font-bold text-foreground">
+                          {member.user.firstName} {member.user.lastName}
+                        </span>
+                        <Badge variant="secondary" className="text-[9px] px-1 py-0 capitalize">
+                          {member.user.role}
+                        </Badge>
                       </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                      <p className="truncate text-[10px] text-muted-foreground">{member.user.email}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-
           <Dialog open={chatFinderOpen} onOpenChange={setChatFinderOpen}>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
@@ -971,19 +1021,23 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
         </CardContent>
       </Card>
 
-      <Card className="min-w-0 overflow-x-auto border-border/60">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 max-[767px]:text-[1.1rem]">
-            <Video className="h-5 w-5 max-[767px]:h-6 max-[767px]:w-6" />
+      {/* ── Right Column: Meeting & Schedule Panel ── */}
+      <Card className="min-w-0 overflow-hidden border-border/70 bg-card/80 backdrop-blur-xl shadow-xl rounded-3xl flex flex-col">
+        <CardHeader className="border-b border-border/50 pb-4 pt-5 px-5 sm:px-6">
+          <CardTitle className="text-lg sm:text-xl font-extrabold tracking-tight text-foreground flex items-center gap-2.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20 shadow-inner">
+              <Video className="h-4.5 w-4.5" />
+            </div>
             Meeting Schedule
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs text-muted-foreground mt-1">
             Admins can schedule project meetings for everyone connected to this project.
           </CardDescription>
         </CardHeader>
-        <CardContent className="min-w-0 space-y-4">
+        <CardContent className="min-w-0 space-y-4 p-4 sm:p-6 flex-1">
           {user?.role === "admin" ? (
             <>
+              {/* Start meeting now — opens Google Meet and shows paste prompt */}
               <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
                 <div className="flex max-w-full flex-col gap-2 sm:flex-row">
                   <Button type="button" variant="outline" onClick={handleCreateMeeting} className="max-[767px]:text-[1rem]">
@@ -992,54 +1046,164 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
                   </Button>
                   <Button onClick={handleScheduleMeeting} disabled={isScheduling} className="max-[767px]:text-[1rem]">
                     <Calendar className="mr-2 h-4 w-4 max-[767px]:h-5 max-[767px]:w-5" />
-                    Schedule Meeting
+                    {isScheduling ? "Scheduling..." : "Schedule Meeting"}
                   </Button>
                 </div>
+
+                {/* Meeting title */}
                 <Input
                   value={meetingTitle}
                   onChange={(e) => setMeetingTitle(e.target.value)}
                   placeholder="Meeting title"
                 />
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Input
-                    type="date"
-                    value={meetingDate}
-                    onChange={(e) => setMeetingDate(e.target.value)}
-                  />
-                  <Input
-                    type="time"
-                    value={meetingTime}
-                    onChange={(e) => setMeetingTime(e.target.value)}
-                  />
+
+                {/* Date quick-picks */}
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {(["today", "tomorrow", "pick"] as const).map((mode) => {
+                      const label = mode === "today" ? "Today" : mode === "tomorrow" ? "Tomorrow" : "Pick Date";
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            setDateMode(mode);
+                            if (mode === "today") {
+                              const d = new Date();
+                              setMeetingDate(d.toISOString().split("T")[0]);
+                            } else if (mode === "tomorrow") {
+                              const d = new Date();
+                              d.setDate(d.getDate() + 1);
+                              setMeetingDate(d.toISOString().split("T")[0]);
+                            } else {
+                              setMeetingDate("");
+                            }
+                          }}
+                          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                            dateMode === mode
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border bg-background hover:bg-muted/60"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {dateMode === "pick" && (
+                    <Input
+                      type="date"
+                      value={meetingDate}
+                      onChange={(e) => setMeetingDate(e.target.value)}
+                      className="max-w-[200px]"
+                    />
+                  )}
+                  {meetingDate && (
+                    <p className="text-xs text-muted-foreground">
+                      Date: {new Date(meetingDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                    </p>
+                  )}
                 </div>
+
+                {/* Time picker */}
+                <Input
+                  type="time"
+                  value={meetingTime}
+                  onChange={(e) => setMeetingTime(e.target.value)}
+                  className="max-w-[160px]"
+                />
+
+                {/* Notes */}
                 <Textarea
                   value={meetingNotes}
                   onChange={(e) => setMeetingNotes(e.target.value)}
                   placeholder="Notes or agenda..."
-                  rows={3}
+                  rows={2}
                 />
+
+                {/* Meeting link input (in form) */}
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Meeting Link (optional)</label>
+                  <Input
+                    value={meetingLinkInput}
+                    onChange={(e) => setMeetingLinkInput(e.target.value)}
+                    placeholder="Paste Google Meet / Zoom link here..."
+                  />
+                </div>
               </div>
 
-              {meetingLink && (
-                  <div className="max-w-[32rem] rounded-xl border bg-background p-3">
+              {/* Paste prompt — appears after clicking Start Meeting Now */}
+              {showLinkPastePrompt && (
+                <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm font-medium">
-                      <Link2 className="h-4 w-4 max-[767px]:h-5 max-[767px]:w-5" />
-                      Meeting link
+                      <Link2 className="h-4 w-4" />
+                      Paste your meeting link
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowLinkPastePrompt(false)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Google Meet opened in a new tab. Once your room loads, copy the link from the address bar and paste it below.
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      value={meetingLink}
+                      onChange={(e) => setMeetingLink(e.target.value)}
+                      placeholder="https://meet.google.com/abc-defg-hij"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={copyMeetingLink}
+                      disabled={!meetingLink.trim()}
+                    >
+                      <Copy className="mr-1 h-3.5 w-3.5" />
+                      Copy
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void handlePostMeetingLink()}
+                      disabled={!meetingLink.trim()}
+                    >
+                      <MessageSquare className="mr-1 h-3.5 w-3.5" />
+                      Post to Chat
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Persistent meeting link display (when link set but paste prompt hidden) */}
+              {meetingLink && !showLinkPastePrompt && (
+                <div className="max-w-[32rem] rounded-xl border bg-background p-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Link2 className="h-4 w-4" />
+                    Meeting link
+                  </div>
                   <div className="mt-2 flex max-w-full flex-col gap-2 sm:flex-row">
-                    <Input value={meetingLink} readOnly className="truncate" />
+                    <Input
+                      value={meetingLink}
+                      onChange={(e) => setMeetingLink(e.target.value)}
+                      placeholder="https://meet.google.com/..."
+                      className="flex-1"
+                    />
                     <Button type="button" variant="outline" onClick={copyMeetingLink} className="max-[767px]:text-[1rem]">
-                      <Copy className="mr-2 h-4 w-4 max-[767px]:h-5 max-[767px]:w-5" />
+                      <Copy className="mr-2 h-4 w-4" />
                       Copy
                     </Button>
                     <Button type="button" onClick={() => void handlePostMeetingLink()} className="max-[767px]:text-[1rem]">
-                      <MessageSquare className="mr-2 h-4 w-4 max-[767px]:h-5 max-[767px]:w-5" />
+                      <MessageSquare className="mr-2 h-4 w-4" />
                       Post to chat
                     </Button>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Opened in a new tab. Share this link with your team.
-                  </p>
                 </div>
               )}
             </>
@@ -1057,7 +1221,7 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
             <ScrollArea className="h-[180px] max-w-full rounded-lg border">
               <div className="space-y-2 p-3">
                 {meetings.map((meeting) => (
-                  <div key={meeting.id} className="rounded-xl border p-3">
+                  <div key={meeting.id} className="rounded-xl border p-3 space-y-1">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-medium">{meeting.title}</p>
@@ -1070,7 +1234,18 @@ export function ProjectCollaborationPanel({ project }: ProjectCollaborationPanel
                       </Badge>
                     </div>
                     {meeting.notes && (
-                      <p className="mt-2 text-sm text-muted-foreground">{meeting.notes}</p>
+                      <p className="text-sm text-muted-foreground">{meeting.notes}</p>
+                    )}
+                    {(meeting as any).meetingLink && (
+                      <a
+                        href={(meeting as any).meetingLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        <Link2 className="h-3 w-3" />
+                        Join meeting
+                      </a>
                     )}
                   </div>
                 ))}

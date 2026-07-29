@@ -23,6 +23,14 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json({ message: 'User not found' });
     }
 
+    if (user.isTrialAdmin && user.trialExpiresAt && new Date() > new Date(user.trialExpiresAt)) {
+      return res.status(403).json({
+        message: 'Your 30-minute admin trial has expired. Please complete payment to continue.',
+        trialExpired: true,
+        redirectTo: '/',
+      });
+    }
+
     req.user = user;
     req.userId = user._id;
     next();

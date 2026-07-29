@@ -109,8 +109,13 @@ function SignupPageContent() {
   useEffect(() => {
     const prefetchedEmail = searchParams.get("email")?.trim() || "";
     const prefetchedName = searchParams.get("name")?.trim() || "";
+    const prefetchedRole = searchParams.get("role")?.trim() as RoleOption | null;
     const prefetchedVerificationToken = searchParams.get("verificationToken")?.trim() || "";
     const trialUsedParam = searchParams.get("trialAlreadyUsed") === "true";
+
+    if (prefetchedRole && (prefetchedRole === "admin" || prefetchedRole === "developer" || prefetchedRole === "trial-admin")) {
+      setRole(prefetchedRole);
+    }
 
     if (prefetchedEmail && (!email || !!prefetchedVerificationToken)) {
       setEmail(prefetchedEmail);

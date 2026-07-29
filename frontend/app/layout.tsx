@@ -14,7 +14,16 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "TickZen - AI Project Management & Task Automation Tool",
   description: "TickZen is an AI-powered project management platform that automates tasks, tracks progress, and boosts team productivity.",
-  keywords: "AI project management, task automation, productivity tool, workflow automation, kanban AI"
+  keywords: "AI project management, task automation, productivity tool, workflow automation, kanban AI",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/logo/light.png", media: "(prefers-color-scheme: light)" },
+      { url: "/logo/dark.png", media: "(prefers-color-scheme: dark)" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({

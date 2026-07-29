@@ -25,6 +25,11 @@ const projectMeetingSchema = new mongoose.Schema({
     type: String,
     default: '',
     trim: true
+  },
+  meetingLink: {
+    type: String,
+    default: '',
+    trim: true
   }
 }, {
   timestamps: true

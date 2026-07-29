@@ -103,7 +103,20 @@ const createAdminUserRecord = async ({
   }
 };
 
-const ensureDatabaseConnection = (res) => {
+const ensureDatabaseConnection = async (res) => {
+  if (mongoose.connection.readyState === 1) {
+    return true;
+  }
+
+  try {
+    const mongodbUri = process.env.MONGODB_URI;
+    if (mongodbUri) {
+      await mongoose.connect(mongodbUri, { serverSelectionTimeoutMS: 5000 });
+    }
+  } catch (err) {
+    console.error('Database connection error:', err.message);
+  }
+
   if (mongoose.connection.readyState !== 1) {
     res.status(503).json({
       message: 'Database unavailable. Check MongoDB connection and try again.',
@@ -244,7 +257,7 @@ const sendOTPEmail = async (email, otp, purpose = 'signup') => {
 // Register new user
 export const signup = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -287,7 +300,7 @@ export const signup = async (req, res) => {
 
 export const sendSignupOtp = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -312,7 +325,7 @@ export const sendSignupOtp = async (req, res) => {
 
 export const sendLoginOtp = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -337,22 +350,17 @@ export const sendLoginOtp = async (req, res) => {
 
 export const getGoogleAuthConfig = async (req, res) => {
   try {
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-
-    if (!clientId) {
-      return res.status(500).json({ message: 'Google OAuth is not configured.' });
-    }
-
+    const clientId = process.env.GOOGLE_CLIENT_ID || '';
     res.json({ clientId });
   } catch (error) {
     console.error('Get Google auth config error:', error);
-    res.status(500).json({ message: 'Unable to load Google auth config', error: error.message });
+    res.status(200).json({ clientId: process.env.GOOGLE_CLIENT_ID || '' });
   }
 };
 
 export const googleAuth = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -365,40 +373,51 @@ export const googleAuth = async (req, res) => {
 
     const normalizedEmail = payload.email.toLowerCase();
     let user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      user = await TrialAdmin.findOne({ email: normalizedEmail });
+    }
 
-    if (user?.role === 'admin') {
-      return res.status(403).json({
-        message: 'Admin accounts must continue through the admin signup and payment flow.',
+    // New Google user -> Send verification token to choose account type (Developer / Trial Admin / Paid Admin)
+    if (!user) {
+      const verificationToken = saveVerifiedSignup(normalizedEmail);
+      return res.json({
+        requiresAccountSelection: true,
+        email: normalizedEmail,
+        name: payload.name || normalizedEmail.split('@')[0],
+        verificationToken,
+        trialAlreadyUsed: false,
       });
     }
 
-    if (!user) {
-      const generatedPassword = crypto.randomBytes(24).toString('hex');
-      user = new User({
-        name: payload.name || normalizedEmail.split('@')[0],
-        email: normalizedEmail,
-        password: generatedPassword,
-        role: 'developer',
-        avatar: payload.picture || '',
+    // Existing user trial expiry check
+    if (user.isTrialAdmin && user.trialExpiresAt && new Date() > new Date(user.trialExpiresAt)) {
+      return res.status(403).json({
+        message: 'Your 30-minute admin trial has expired. Please complete payment to continue.',
+        trialExpired: true,
+        redirectTo: '/',
       });
+    }
 
-      await user.save();
-    } else if (payload.picture && user.avatar !== payload.picture) {
+    if (payload.picture && user.avatar !== payload.picture) {
       user.avatar = payload.picture;
       await user.save();
     }
 
     const token = generateToken(user._id);
+    const userObj = user.toObject ? user.toObject() : user;
 
     res.json({
       message: 'Google authentication successful',
       token,
       user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        avatar: user.avatar,
+        id: userObj._id,
+        name: userObj.name,
+        email: userObj.email,
+        role: userObj.role,
+        avatar: userObj.avatar,
+        isTrialAdmin: userObj.isTrialAdmin || false,
+        isPaidAdmin: userObj.isPaidAdmin || false,
+        trialExpiresAt: userObj.trialExpiresAt || null,
       },
     });
   } catch (error) {
@@ -409,7 +428,7 @@ export const googleAuth = async (req, res) => {
 
 export const verifySignupOtp = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -491,7 +510,7 @@ export const verifySignupOtp = async (req, res) => {
 
 export const verifyLoginOtp = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -524,7 +543,7 @@ export const verifyLoginOtp = async (req, res) => {
         return res.status(403).json({
           message: 'Your 30-minute admin trial has expired. Please complete payment to continue.',
           trialExpired: true,
-          redirectTo: '/signup',
+          redirectTo: '/',
         });
       }
     }
@@ -551,7 +570,7 @@ export const verifyLoginOtp = async (req, res) => {
 
 export const verifySignupEmailOtp = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -587,7 +606,7 @@ export const verifySignupEmailOtp = async (req, res) => {
 
 export const completeVerifiedSignup = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -671,7 +690,7 @@ export const completeVerifiedSignup = async (req, res) => {
 // Register new admin after payment
 export const signupAdmin = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -727,7 +746,7 @@ export const createAdminOrder = async (req, res) => {
 
 export const verifyAdminPayment = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -800,7 +819,7 @@ export const verifyAdminPayment = async (req, res) => {
 // Login user
 export const login = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -840,19 +859,36 @@ export const login = async (req, res) => {
 // Get current user profile
 export const getProfile = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
-    const user = await User.findById(req.userId)
+    let user = await User.findById(req.userId)
       .populate('joinedProjects', 'name description progress')
       .select('-password');
+
+    if (!user) {
+      user = await TrialAdmin.findById(req.userId).select('-password');
+    }
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json({ user });
+    const userObj = user.toObject ? user.toObject() : user;
+    res.json({
+      user: {
+        id: userObj._id,
+        name: userObj.name,
+        email: userObj.email,
+        role: userObj.role,
+        avatar: userObj.avatar,
+        isTrialAdmin: userObj.isTrialAdmin || false,
+        isPaidAdmin: userObj.isPaidAdmin || false,
+        trialExpiresAt: userObj.trialExpiresAt || null,
+        createdAt: userObj.createdAt,
+      },
+    });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({ message: 'Error fetching profile', error: error.message });
@@ -862,14 +898,17 @@ export const getProfile = async (req, res) => {
 // Update user profile
 export const updateProfile = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
     const { name, email } = req.body;
     const avatarPath = req.file ? `/uploads/${req.file.filename}` : req.body.avatar;
 
-    const user = await User.findById(req.userId);
+    let user = await User.findById(req.userId);
+    if (!user) {
+      user = await TrialAdmin.findById(req.userId);
+    }
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -883,20 +922,25 @@ export const updateProfile = async (req, res) => {
       user.email = email;
     }
 
-    if (typeof avatarPath === 'string') {
+    if (typeof avatarPath === 'string' && avatarPath.trim() !== '') {
       user.avatar = avatarPath;
     }
 
     await user.save();
 
+    const userObj = user.toObject ? user.toObject() : user;
     res.json({
       message: 'Profile updated successfully',
       user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        avatar: user.avatar
+        id: userObj._id,
+        name: userObj.name,
+        email: userObj.email,
+        role: userObj.role,
+        avatar: userObj.avatar,
+        isTrialAdmin: userObj.isTrialAdmin || false,
+        isPaidAdmin: userObj.isPaidAdmin || false,
+        trialExpiresAt: userObj.trialExpiresAt || null,
+        createdAt: userObj.createdAt,
       }
     });
   } catch (error) {
@@ -908,7 +952,7 @@ export const updateProfile = async (req, res) => {
 // Get all developers (for admin to invite)
 export const getDevelopers = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -926,7 +970,7 @@ export const getDevelopers = async (req, res) => {
 // Get all users (admin only)
 export const getAllUsers = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 
@@ -956,7 +1000,7 @@ export const getAllUsers = async (req, res) => {
 // Get all admins (admin only - for project co-admin selection)
 export const getAdmins = async (req, res) => {
   try {
-    if (!ensureDatabaseConnection(res)) {
+    if (!(await ensureDatabaseConnection(res))) {
       return;
     }
 

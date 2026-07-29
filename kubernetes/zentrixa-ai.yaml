@@ -21,31 +21,43 @@ spec:
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8001
+        env:
+        - name: WHISPER_MODEL
+          value: "base"
+        - name: WHISPER_COMPUTE_TYPE
+          value: "int8"
+        - name: INTENT_CONFIDENCE_THRESHOLD
+          value: "0.90"
         resources:
           requests:
-            cpu: 100m
-            memory: 500Mi
+            cpu: 200m
+            memory: 800Mi
           limits:
-            cpu: 500m
-            memory: 1Gi
+            cpu: 1000m
+            memory: 1500Mi
+        # Startup probe — generous window: model loads synchronously at start
         startupProbe:
           httpGet:
             path: /health
             port: 8001
-          failureThreshold: 20
+          failureThreshold: 36    # 36 × 5s = 3 min startup budget
           periodSeconds: 5
+        # Liveness — confirm process is alive (instant endpoint)
         livenessProbe:
           httpGet:
-            path: /health
-            port: 8001
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        readinessProbe:
-          httpGet:
-            path: /health
+            path: /live
             port: 8001
           initialDelaySeconds: 10
+          periodSeconds: 20
+          failureThreshold: 3
+        # Readiness — only ready once Whisper + IntentEngine are loaded
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8001
+          initialDelaySeconds: 15
           periodSeconds: 10
+          failureThreshold: 6
 ---
 apiVersion: v1
 kind: Service

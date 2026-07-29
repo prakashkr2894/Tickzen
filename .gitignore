@@ -16,3 +16,9 @@ screenshots/
 dist/
 build/
 frontend/components/notification_sound/
+__pycache__/
+*.pyc
+zentrixa-ai/model/*.safetensors
+zentrixa-ai/model/*.pth
+zentrixa-ai/model/*.bin
+zentrixa-ai/model/checkpoint-*/

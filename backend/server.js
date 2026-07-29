@@ -40,10 +40,8 @@ if (!MONGODB_URI) {
   process.exit(1);
 }
 
-if (!process.env.JWT_SECRET) {
-  console.error('❌ JWT_SECRET is missing. Set it in your environment.');
-  process.exit(1);
-}
+const JWT_SECRET = process.env.JWT_SECRET || 'tickzen_default_secret_key_2026';
+process.env.JWT_SECRET = JWT_SECRET;
 // ─────────────────────────────────────────────────────────────────────────────
 
 mongoose.set('bufferCommands', false);
@@ -52,7 +50,7 @@ const app = express();
 const server = http.createServer(app);
 
 // Allowed origins: local dev + production domain(s) via env
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:4500')
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:4500,https://tickzen.in.net,https://www.tickzen.in.net,http://localhost:8080')
   .split(',')
   .map(o => o.trim())
   .filter(Boolean);
@@ -61,6 +59,7 @@ const corsOptions = {
   origin: ALLOWED_ORIGINS,
   credentials: true,
 };
+
 
 const io = new SocketIOServer(server, { cors: corsOptions });
 setRealtimeServer(io);
@@ -176,20 +175,16 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-async function startServer() {
-  try {
-    await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
-    console.log('✅ Connected to MongoDB');
-    startKeepAlive();
-    server.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 10000 })
+    .then(() => {
+      console.log('✅ Connected to MongoDB');
+      startKeepAlive();
+    })
+    .catch((error) => {
+      console.error('MongoDB connection error:', error.message);
     });
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    process.exit(1);
-  }
-}
-
-startServer();
+});
 
 export default app;

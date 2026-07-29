@@ -1,4 +1,4 @@
-name: CI-CD Pipeline
+name: CI-CD Pipeline (Docker Compose Deployment)
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  # ── Build backend image ──────────────────────────────────────────────────────
+  # ── Build & Push backend image ─────────────────────────────────────────────
   build-backend:
     runs-on: ubuntu-latest
     steps:
@@ -24,25 +24,16 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Export Backend
-        run: |
-          docker buildx build \
-            --cache-from type=registry,ref=${{ secrets.DOCKER_USERNAME }}/mean-backend:cache \
-            --cache-to   type=registry,ref=${{ secrets.DOCKER_USERNAME }}/mean-backend:cache,mode=max \
-            --tag ${{ secrets.DOCKER_USERNAME }}/mean-backend:${{ github.sha }} \
-            --tag ${{ secrets.DOCKER_USERNAME }}/mean-backend:latest \
-            --load \
-            ./backend
-          docker save -o backend.tar ${{ secrets.DOCKER_USERNAME }}/mean-backend:${{ github.sha }}
-
-      - name: Upload backend artifact
-        uses: actions/upload-artifact@v4
+      - name: Build and Push Backend
+        uses: docker/build-push-action@v4
         with:
-          name: backend-image
-          path: backend.tar
-          retention-days: 1
+          context: ./backend
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/mean-backend:latest
+            ${{ secrets.DOCKER_USERNAME }}/mean-backend:${{ github.sha }}
 
-  # ── Build frontend image ────────────────────────────────────────────────────
+  # ── Build & Push frontend image ────────────────────────────────────────────
   build-frontend:
     runs-on: ubuntu-latest
     steps:
@@ -60,26 +51,20 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Export Frontend
-        run: |
-          docker buildx build \
-            --build-arg NEXT_PUBLIC_API_URL=/api \
-            --cache-from type=registry,ref=${{ secrets.DOCKER_USERNAME }}/mean-frontend:cache \
-            --cache-to   type=registry,ref=${{ secrets.DOCKER_USERNAME }}/mean-frontend:cache,mode=max \
-            --tag ${{ secrets.DOCKER_USERNAME }}/mean-frontend:${{ github.sha }} \
-            --tag ${{ secrets.DOCKER_USERNAME }}/mean-frontend:latest \
-            --load \
-            ./frontend
-          docker save -o frontend.tar ${{ secrets.DOCKER_USERNAME }}/mean-frontend:${{ github.sha }}
-
-      - name: Upload frontend artifact
-        uses: actions/upload-artifact@v4
+      - name: Build and Push Frontend
+        uses: docker/build-push-action@v4
         with:
-          name: frontend-image
-          path: frontend.tar
-          retention-days: 1
+          context: ./frontend
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api
+            NEXT_PUBLIC_API_BASE_URL=/api
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/mean-frontend:latest
+            ${{ secrets.DOCKER_USERNAME }}/mean-frontend:${{ github.sha }}
 
-  # ── Build zentrixa-ai image ─────────────────────────────────────────────────
+
+  # ── Build & Push zentrixa-ai image ─────────────────────────────────────────
   build-zentrixa:
     runs-on: ubuntu-latest
     steps:
@@ -97,25 +82,16 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Export Zentrixa AI
-        run: |
-          docker buildx build \
-            --cache-from type=registry,ref=${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:cache \
-            --cache-to   type=registry,ref=${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:cache,mode=max \
-            --tag ${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:${{ github.sha }} \
-            --tag ${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:latest \
-            --load \
-            ./zentrixa-ai
-          docker save -o zentrixa-ai.tar ${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:${{ github.sha }}
-
-      - name: Upload zentrixa artifact
-        uses: actions/upload-artifact@v4
+      - name: Build and Push Zentrixa AI
+        uses: docker/build-push-action@v4
         with:
-          name: zentrixa-image
-          path: zentrixa-ai.tar
-          retention-days: 1
+          context: ./zentrixa-ai
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:latest
+            ${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:${{ github.sha }}
 
-  # ── Deploy to VPS (after all 3 builds succeed in parallel) ─────────────────
+  # ── Deploy to VPS using Docker Compose ─────────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
     needs: [build-backend, build-frontend, build-zentrixa]
@@ -123,22 +99,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
-      - name: Download all image artifacts
-        uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
+          lfs: true
 
-      - name: Copy artifacts to VPS
+      - name: Copy docker-compose.yml to VPS
         uses: appleboy/scp-action@v0.1.4
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "backend.tar,frontend.tar,zentrixa-ai.tar,kubernetes/*.yaml"
-          target: "/tmp/tickzen-deploy"
+          source: "docker-compose.yml"
+          target: "~/tickzen/"
 
-      - name: Deploy to k3s on VPS
+      - name: Deploy Docker Compose stack on VPS
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -146,91 +119,32 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             set -e
+            echo "Navigating to ~/tickzen directory..."
+            mkdir -p ~/tickzen
+            cd ~/tickzen
 
-            # ---------- IMPORT IMAGES TO CONTAINERD ----------
-            echo "Importing images into containerd..."
-            sudo k3s ctr -n k8s.io images import /tmp/tickzen-deploy/backend.tar
-            sudo k3s ctr -n k8s.io images import /tmp/tickzen-deploy/frontend.tar
-            sudo k3s ctr -n k8s.io images import /tmp/tickzen-deploy/zentrixa-ai.tar
+            echo "Updating .env file with secrets..."
+            cat << 'EOF' > .env
+            PORT=5000
+            MONGODB_URI=${{ secrets.MONGODB_URI }}
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            JWT_EXPIRE=${{ secrets.JWT_EXPIRE }}
+            BREVO_API_KEY=${{ secrets.BREVO_API_KEY }}
+            BREVO_SENDER_EMAIL=${{ secrets.BREVO_SENDER_EMAIL }}
+            BREVO_SENDER_NAME=${{ secrets.BREVO_SENDER_NAME }}
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            RAZORPAY_KEY_ID=${{ secrets.RAZORPAY_KEY_ID }}
+            RAZORPAY_KEY_SECRET=${{ secrets.RAZORPAY_KEY_SECRET }}
+            EOF
 
-            # ---------- SECRETS CONFIGURATION ----------
-            echo "Applying secret configuration..."
-            sudo kubectl create secret generic tickzen-secrets \
-              --namespace=tickzen \
-              --from-literal=MONGODB_URI="${{ secrets.MONGODB_URI }}" \
-              --from-literal=JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-              --from-literal=JWT_EXPIRE="${{ secrets.JWT_EXPIRE }}" \
-              --from-literal=BREVO_API_KEY="${{ secrets.BREVO_API_KEY }}" \
-              --from-literal=BREVO_SENDER_EMAIL="${{ secrets.BREVO_SENDER_EMAIL }}" \
-              --from-literal=BREVO_SENDER_NAME="${{ secrets.BREVO_SENDER_NAME }}" \
-              --from-literal=GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}" \
-              --from-literal=GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
-              --from-literal=RAZORPAY_KEY_ID="${{ secrets.RAZORPAY_KEY_ID }}" \
-              --from-literal=RAZORPAY_KEY_SECRET="${{ secrets.RAZORPAY_KEY_SECRET }}" \
-              --dry-run=client -o yaml | sudo kubectl apply -f -
+            echo "Pulling latest Docker images..."
+            docker compose pull
 
-            # ---------- PREPARE MANIFESTS ----------
-            echo "Updating image tags in Kubernetes manifests..."
-            cd /tmp/tickzen-deploy/kubernetes
-            sed -i "s|image: prakash1142/mean-backend:latest|image: ${{ secrets.DOCKER_USERNAME }}/mean-backend:${{ github.sha }}|g" backend.yaml
-            sed -i "s|image: prakash1142/mean-frontend:latest|image: ${{ secrets.DOCKER_USERNAME }}/mean-frontend:${{ github.sha }}|g" frontend.yaml
-            sed -i "s|image: prakash1142/zentrixa-ai:latest|image: ${{ secrets.DOCKER_USERNAME }}/zentrixa-ai:${{ github.sha }}|g" zentrixa-ai.yaml
+            echo "Restarting Docker containers..."
+            docker compose up -d --remove-orphans
 
-            # ---------- APPLY MANIFESTS ----------
-            echo "Applying Kubernetes manifests..."
-            sudo kubectl apply -f namespace.yaml
-            sudo kubectl apply -f backend.yaml
-            sudo kubectl apply -f frontend.yaml
-            sudo kubectl apply -f zentrixa-ai.yaml
-            sudo kubectl apply -f ingress.yaml
-            sudo kubectl apply -f monitoring-access.yaml
+            echo "Cleaning up old unused Docker images..."
+            docker image prune -f
 
-            # ---------- DEPLOYMENT VERIFICATION ----------
-            echo "Waiting for rollouts to complete..."
-            sudo kubectl rollout status deployment/tickzen-backend  -n tickzen --timeout=120s
-            sudo kubectl rollout status deployment/tickzen-frontend -n tickzen --timeout=120s
-            sudo kubectl rollout status deployment/zentrixa-ai      -n tickzen --timeout=120s
-
-            echo "Verifying Pods readiness status..."
-            sudo kubectl wait --for=condition=Ready pod -l app=tickzen-backend  -n tickzen --timeout=120s
-            sudo kubectl wait --for=condition=Ready pod -l app=tickzen-frontend -n tickzen --timeout=120s
-            sudo kubectl wait --for=condition=Ready pod -l app=zentrixa-ai      -n tickzen --timeout=120s
-
-            echo "Validating application health endpoints..."
-            BACKEND_HEALTH_STATUS=$(sudo kubectl exec -n tickzen deployment/tickzen-backend -c backend -- curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health)
-            if [ "$BACKEND_HEALTH_STATUS" -ne 200 ]; then
-              echo "Backend healthcheck failed: Status $BACKEND_HEALTH_STATUS"
-              exit 1
-            fi
-            echo "Backend is healthy! ✅"
-
-            FRONTEND_STATUS=$(sudo kubectl exec -n tickzen deployment/tickzen-frontend -c frontend -- curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/)
-            if [ "$FRONTEND_STATUS" -ne 200 ]; then
-              echo "Frontend healthcheck failed: Status $FRONTEND_STATUS"
-              exit 1
-            fi
-            echo "Frontend is healthy! ✅"
-
-            # ---------- CLEANUP STORAGE ----------
-            echo "Starting post-deployment storage optimization..."
-
-            # Remove temporary deploy archives
-            rm -rf /tmp/tickzen-deploy
-
-            # Containerd cleanup: remove dangling/untagged images replaced by new imports
-            if command -v k3s &>/dev/null; then
-              DANGLING_IMAGES=$(sudo k3s crictl images | awk '$2 == "<none>" {print $3}')
-              if [ ! -z "$DANGLING_IMAGES" ]; then
-                echo "Removing dangling containerd images: $DANGLING_IMAGES"
-                sudo k3s crictl rmi $DANGLING_IMAGES || true
-              fi
-            fi
-
-            # Conditional Docker cleanup (only if Docker daemon is active on VPS)
-            if command -v docker &>/dev/null && systemctl is-active --quiet docker; then
-              echo "Pruning Docker images and builder cache on VPS..."
-              docker image prune -f || true
-              docker builder prune -f || true
-            fi
-
-            echo "Deployment fully validated and cleanup completed successfully! 🎉"
+            echo "Deployment completed successfully! 🚀"

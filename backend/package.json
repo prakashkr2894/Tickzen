@@ -9,7 +9,6 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "assemblyai": "^4.30.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

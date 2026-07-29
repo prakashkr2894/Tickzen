@@ -19,6 +19,8 @@ declare global {
         id: {
           initialize: (config: {
             client_id: string;
+            auto_select?: boolean;
+            itp_support?: boolean;
             callback: (response: { credential?: string }) => void;
           }) => void;
           renderButton: (
@@ -47,6 +49,12 @@ export function GoogleAuthButton({
   const [scriptLoaded, setScriptLoaded] = useState(false);
   const [clientId, setClientId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.google) {
+      setScriptLoaded(true);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -80,7 +88,8 @@ export function GoogleAuthButton({
   }, []);
 
   useEffect(() => {
-    if (!scriptLoaded || !clientId || !buttonRef.current || !window.google) {
+    const isGoogleReady = scriptLoaded || Boolean(typeof window !== "undefined" && window.google);
+    if (!isGoogleReady || !clientId || !buttonRef.current || !window.google) {
       return;
     }
 
@@ -88,6 +97,8 @@ export function GoogleAuthButton({
 
     window.google.accounts.id.initialize({
       client_id: clientId,
+      auto_select: false,
+      itp_support: true,
       callback: async (response) => {
         if (!response.credential) {
           toast.error("Google did not return a valid credential.");

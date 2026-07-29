@@ -1,3 +1,61 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:97b2ef3f5e6d2f405c812c8c0785864973cdb35dba692ae3b7195112621b0b3b
-size 3600
+[
+  { "text": "create a new project", "intent": "create_project" },
+  { "text": "make a project for website redesign", "intent": "create_project" },
+  { "text": "start a new client onboarding project", "intent": "create_project" },
+  { "text": "add project called mobile app launch", "intent": "create_project" },
+  { "text": "set up a project for the marketing team", "intent": "create_project" },
+
+  { "text": "create a task", "intent": "create_task" },
+  { "text": "add a task for updating login page", "intent": "create_task" },
+  { "text": "make task fix the payment bug", "intent": "create_task" },
+  { "text": "create task to review sprint backlog", "intent": "create_task" },
+  { "text": "add a new task in the project", "intent": "create_task" },
+
+  { "text": "assign task to rahul", "intent": "assign_task" },
+  { "text": "give this task to priya", "intent": "assign_task" },
+  { "text": "assign the bug fix task to john", "intent": "assign_task" },
+  { "text": "move this task to an engineer", "intent": "assign_task" },
+  { "text": "set task owner as anita", "intent": "assign_task" },
+
+  { "text": "move task to done", "intent": "move_task" },
+  { "text": "mark task as in progress", "intent": "move_task" },
+  { "text": "change task status to review", "intent": "move_task" },
+  { "text": "put this task in backlog", "intent": "move_task" },
+  { "text": "move the task to blocked", "intent": "move_task" },
+
+  { "text": "delete task", "intent": "delete_task" },
+  { "text": "remove this task", "intent": "delete_task" },
+  { "text": "cancel the task for ui redesign", "intent": "delete_task" },
+  { "text": "permanently delete task", "intent": "delete_task" },
+  { "text": "trash the bug fix task", "intent": "delete_task" },
+
+  { "text": "show delayed tasks", "intent": "show_delayed" },
+  { "text": "list overdue tasks", "intent": "show_delayed" },
+  { "text": "what tasks are delayed", "intent": "show_delayed" },
+  { "text": "show all late tasks", "intent": "show_delayed" },
+  { "text": "find tasks that missed their deadline", "intent": "show_delayed" },
+
+  { "text": "update the deadline to friday", "intent": "update_deadline" },
+  { "text": "change task due date to tomorrow", "intent": "update_deadline" },
+  { "text": "move the deadline to next week", "intent": "update_deadline" },
+  { "text": "set deadline for task to june 10", "intent": "update_deadline" },
+  { "text": "reschedule this task deadline", "intent": "update_deadline" },
+
+  { "text": "add member to the project", "intent": "add_member" },
+  { "text": "invite arjun to this project", "intent": "add_member" },
+  { "text": "add priya as a project member", "intent": "add_member" },
+  { "text": "include another teammate in the project", "intent": "add_member" },
+  { "text": "grant access to the project for rahul", "intent": "add_member" },
+
+  { "text": "analyze project progress", "intent": "analyze_project" },
+  { "text": "give me a project analysis", "intent": "analyze_project" },
+  { "text": "summarize project health", "intent": "analyze_project" },
+  { "text": "show risks and blockers in this project", "intent": "analyze_project" },
+  { "text": "check status of the project", "intent": "analyze_project" },
+
+  { "text": "create project with ai", "intent": "create_with_ai" },
+  { "text": "generate a project plan automatically", "intent": "create_with_ai" },
+  { "text": "use ai to make a new project", "intent": "create_with_ai" },
+  { "text": "draft a project structure for me", "intent": "create_with_ai" },
+  { "text": "build a task plan from this idea using ai", "intent": "create_with_ai" }
+]

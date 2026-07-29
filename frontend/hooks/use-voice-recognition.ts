@@ -112,7 +112,7 @@ export function useVoiceRecognition(options: UseVoiceRecognitionOptions = {}) {
     if (!isProcessingRef.current) setIsProcessing(false);
   }, [clearTimers, stopAudioTracks]);
 
-  // ── TranscribeAudio → AssemblyAI ─────────────────────────────────────────────
+  // ── TranscribeAudio → Faster-Whisper (via backend proxy) ──────────────────────
 
   const processAudio = useCallback(async (audioBlob: Blob) => {
     if (isProcessingRef.current) return;
@@ -145,9 +145,17 @@ export function useVoiceRecognition(options: UseVoiceRecognitionOptions = {}) {
 
       onFinalResultRef.current?.(text);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to transcribe audio.";
+      let msg = err instanceof Error ? err.message : "Failed to transcribe audio.";
+      try {
+        const parsed = JSON.parse(msg);
+        msg = parsed.detail || parsed.message || msg;
+      } catch {
+        // ignore non-json error strings
+      }
       setError(msg);
-      onErrorRef.current?.(msg);
+      if (!/audio file is empty|no speech detected/i.test(msg)) {
+        onErrorRef.current?.(msg);
+      }
     } finally {
       isProcessingRef.current = false;
       setIsProcessing(false);
@@ -164,11 +172,26 @@ export function useVoiceRecognition(options: UseVoiceRecognitionOptions = {}) {
       setTranscript("");
       chunksRef.current = [];
 
-      // Always request microphone with en-US hint
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Enhanced WebRTC microphone constraints for clean SNR audio input
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 48000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       micStreamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType,
+        audioBitsPerSecond: 128000,
+      });
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (e) => {
@@ -252,7 +275,7 @@ export function useVoiceRecognition(options: UseVoiceRecognitionOptions = {}) {
     supported,
     /** True while the microphone is recording (show animated circle) */
     isListening,
-    /** True while AssemblyAI is transcribing after recording stopped */
+    /** True while Faster-Whisper is transcribing after recording stopped */
     isProcessing,
     isMuted,
     transcript,

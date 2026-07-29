@@ -42,8 +42,8 @@ export const getProjectChatMessages = async (req, res) => {
       messages,
       members: [
         formatMember(project.createdBy),
-        ...project.developers.map(formatMember)
-      ]
+        ...(Array.isArray(project.developers) ? project.developers.map(formatMember) : [])
+      ].filter(Boolean)
     });
   } catch (error) {
     console.error('Get project chat messages error:', error);
@@ -208,9 +208,7 @@ export const getProjectMeetings = async (req, res) => {
       .populate('createdBy', 'name email role')
       .sort({ scheduledFor: 1, createdAt: -1 });
 
-    res.json({
-      meetings
-    });
+    res.json({ meetings });
   } catch (error) {
     console.error('Get project meetings error:', error);
     res.status(500).json({ message: 'Error fetching meetings', error: error.message });
@@ -220,7 +218,7 @@ export const getProjectMeetings = async (req, res) => {
 export const createProjectMeeting = async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { title, scheduledFor, notes } = req.body;
+    const { title, scheduledFor, notes, meetingLink } = req.body;
 
     if (!title || !title.trim()) {
       return res.status(400).json({ message: 'Meeting title is required' });
@@ -248,7 +246,8 @@ export const createProjectMeeting = async (req, res) => {
       createdBy: req.userId,
       title: title.trim(),
       scheduledFor: new Date(scheduledFor),
-      notes: notes || ''
+      notes: notes || '',
+      meetingLink: meetingLink?.trim() || ''
     });
 
     await meeting.save();

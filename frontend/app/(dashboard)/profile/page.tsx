@@ -81,7 +81,22 @@ export default function ProfilePage() {
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={(event) => setAvatarFile(event.target.files?.[0] || null)}
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    setAvatarFile(file);
+                    setIsLoading(true);
+                    try {
+                      await updateProfile({ firstName, lastName, avatarFile: file });
+                      toast.success("Profile picture updated successfully!");
+                      setAvatarFile(null);
+                    } catch (error) {
+                      const msg = error instanceof Error ? error.message : "Failed to update profile picture";
+                      toast.error(msg);
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
                 />
               </label>
             </div>
@@ -147,26 +162,7 @@ export default function ProfilePage() {
               </FieldDescription>
             </Field>
 
-            <Field>
-              <FieldLabel>Profile Picture</FieldLabel>
-              <div className="flex items-center gap-3">
-                <Button type="button" variant="outline" asChild>
-                  <label className="cursor-pointer">
-                    <Camera className="mr-2 h-4 w-4" />
-                    Choose Image
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(event) => setAvatarFile(event.target.files?.[0] || null)}
-                    />
-                  </label>
-                </Button>
-                <FieldDescription>
-                  PNG or JPG. Your profile picture updates for both admin and developer.
-                </FieldDescription>
-              </div>
-            </Field>
+
 
             <Separator />
 

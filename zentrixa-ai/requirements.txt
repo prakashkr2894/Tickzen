@@ -1,3 +1,12 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:9daf28425d414692d5be805937697c9ab6eafb9128c0c2908bf7a0b8b883d314
-size 90
+fastapi
+uvicorn[standard]
+python-multipart
+faster-whisper
+rapidfuzz
+numpy
+pydantic
+transformers
+datasets
+scikit-learn
+accelerate
+openai

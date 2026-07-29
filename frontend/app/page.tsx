@@ -129,6 +129,15 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("trialExpired") === "true") {
+        toast.error("Your 30-minute admin trial has expired. Please sign in or create an account.");
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     if (!isLoading && user) {
       router.push("/dashboard");
     }
@@ -311,19 +320,21 @@ export default function HomePage() {
             <nav className="flex flex-row items-start sm:items-center justify-between mb-8 md:mb-12 gap-2">
 
               {/* Logo Switcher */}
-              <div className="relative h-8 w-24 sm:h-10 sm:w-28 md:h-16 md:w-40 lg:h-20 lg:w-48 shrink-0 overflow-hidden mt-1 sm:mt-0">
+              <div className="relative h-8 w-24 sm:h-10 sm:w-28 md:h-16 md:w-40 lg:h-20 lg:w-48 shrink-0 overflow-hidden mt-1 sm:mt-0" style={{ zoom: 0.909 }}>
                 {!mounted ? null : (
                   <>
                     <Image
                       src="/logo/light.png"
                       alt="TickZen Logo Light"
                       fill
+                      sizes="(max-width: 768px) 160px, 192px"
                       className={`object-contain transition-opacity duration-[800ms] ${theme !== 'dark' ? 'opacity-100' : 'opacity-0'}`}
                     />
                     <Image
                       src="/logo/dark.png"
                       alt="TickZen Logo Dark"
                       fill
+                      sizes="(max-width: 768px) 160px, 192px"
                       className={`object-contain transition-opacity duration-[800ms] ${theme === 'dark' ? 'opacity-100' : 'opacity-0'}`}
                     />
                   </>

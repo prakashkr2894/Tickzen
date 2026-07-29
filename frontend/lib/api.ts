@@ -16,7 +16,7 @@ let memoryToken: string | null = null;
 const SERVER_FALLBACK_API = "http://localhost:5000/api";
 
 function getApiBaseUrl(): string {
-  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  const fromEnv = (process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL)?.trim();
   if (fromEnv) {
     return fromEnv.replace(/\/+$/, "");
   }
@@ -25,6 +25,7 @@ function getApiBaseUrl(): string {
   }
   return SERVER_FALLBACK_API;
 }
+
 
 export { getApiBaseUrl };
 
@@ -53,6 +54,10 @@ export function getWebSocketBaseUrl(): string {
 
   const apiBase = getApiBaseUrl();
   if (apiBase === "/api") {
+    if (typeof window !== "undefined") {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${protocol}//${window.location.host}`;
+    }
     return "ws://localhost:5000";
   }
 
@@ -84,11 +89,15 @@ export function getSocketIoBaseUrl(): string {
 
   const apiBase = getApiBaseUrl();
   if (apiBase === "/api") {
+    if (typeof window !== "undefined") {
+      return window.location.origin;
+    }
     return "http://localhost:5000";
   }
 
   return toSocketIoBaseUrl(apiBase);
 }
+
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -166,6 +175,23 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const data: unknown = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    const isTrialExpired =
+      typeof data === "object" &&
+      data !== null &&
+      "trialExpired" in data &&
+      (data as { trialExpired: unknown }).trialExpired === true;
+
+    if (isTrialExpired || response.status === 401 || (response.status === 403 && isTrialExpired)) {
+      clearToken();
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("user");
+        localStorage.removeItem("auth-session");
+        if (window.location.pathname !== "/") {
+          window.location.href = `/?trialExpired=true`;
+        }
+      }
+    }
+
     const message =
       typeof data === "object" &&
       data !== null &&

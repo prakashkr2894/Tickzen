@@ -131,7 +131,7 @@
     @apply border-border outline-ring/50;
   }
   html {
-    font-size: 80%;
+    font-size: 88%;
   }
   body {
     @apply bg-background text-foreground;
@@ -267,6 +267,25 @@
     opacity: 1;
     transform: translateY(0) scale(1);
     filter: blur(0);
+  }
+}
+
+/* ── Page transition ───────────────────────────────────── */
+/* Animation is driven by GSAP in PageTransition component */
+.page-transition-root {
+  min-height: 0;
+  flex: 1;
+}
+
+/* ── Zentrixa tooltip pop ───────────────────────────────── */
+@keyframes zentrixa-tooltip-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -560,29 +579,16 @@
   }
 }
 
-.brown-scrollbar {
-  scrollbar-color: rgba(133, 92, 54, 0.9) rgba(240, 224, 207, 0.35);
-  scrollbar-width: thin;
+/* ── Invisible Scrollbars for Dashboard & Application Page ─────── */
+* {
+  -ms-overflow-style: none !important;  /* IE and Edge */
+  scrollbar-width: none !important;  /* Firefox */
 }
 
-.brown-scrollbar::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-.brown-scrollbar::-webkit-scrollbar-track {
-  background: rgba(240, 224, 207, 0.28);
-  border-radius: 9999px;
-}
-
-.brown-scrollbar::-webkit-scrollbar-thumb {
-  border-radius: 9999px;
-  border: 2px solid rgba(240, 224, 207, 0.28);
-  background: linear-gradient(180deg, rgba(147, 103, 62, 0.95), rgba(102, 69, 39, 0.95));
-}
-
-.brown-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgba(166, 120, 75, 1), rgba(120, 83, 49, 1));
+*::-webkit-scrollbar {
+  display: none !important;  /* Chrome, Safari and Opera */
+  width: 0px !important;
+  height: 0px !important;
 }
 
 ::view-transition-old(root),

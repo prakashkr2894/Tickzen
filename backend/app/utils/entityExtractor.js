@@ -16,6 +16,16 @@ const clean = (value = "") => value.replace(/\s+/g, " ").trim().replace(/^["'.,!
 const stripLeadingTokens = (value = "") =>
   clean(value).replace(/^(the|a|an|my|this|that)\s+/i, "").trim();
 
+// Strip "name/named/called/titled/and name it" label that appears between "project" and actual name
+const stripLeadingLabel = (value = "") =>
+  clean(value).replace(/^(?:and\s+name\s+it|and\s+call\s+it|and\s+title\s+it|with\s+name|name\s+with|which\s+is\s+named|that\s+is\s+called|named?|called|titled?|title|is|name|with)\s+/i, "").trim();
+
+// Strip common voice filler phrases from the end of a captured name
+const stripVoiceFillers = (value = "") =>
+  value
+    .replace(/\s+(at\s+least|at\s+all|please|okay|ok|now|right\s+now|you\s+know|so|then)\s*$/i, "")
+    .trim();
+
 const takeUntil = (value = "", stopWords = []) => {
   if (!value) return "";
   const pattern = new RegExp(`\\b(?:${stopWords.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "i");
@@ -49,6 +59,35 @@ const extractWithPatterns = (text, patterns) => {
 export function extractEntities(text = "", intent = "unknown") {
   const normalized = clean(text);
   const entities = {};
+
+  // ── create_project: extract project name using modular pattern groups ──
+  if (intent === "create_project") {
+    const VERB_ACTIONS = "(?:create|make|add|start|new|build|open|launch|setup|set\\s+up|initiate)";
+    const WANT_PHRASES = "(?:i(?:'d|\\s+would|\\s+want|\\s+need)\\s+(?:like\\s+)?to\\s+(?:create|make|add|start|build)?\\s*|(?:i(?:'d|\\s+would)\\s+like\\s+)?|(?:can|could|please)\\s+(?:you\\s+)?(?:create|make|add|start|build)?\\s*)";
+    const PROJECT_NOUNS = "(?:project|workspace|repository|repo)";
+    const CONNECTORS = "(?:\\s+(?:and\\s+name\\s+it|and\\s+call\\s+it|and\\s+title\\s+it|with\\s+name|name\\s+with|which\\s+is\\s+named|that\\s+is\\s+called|named?|called|titled?|title|is|name|with))\\s+";
+    const DELIMITERS = "(?:\\s+(?:in|for|with|assigned|by|on|at|due|priority|status|please|ok|okay|now)\\b|$)";
+
+    const createProjectPatterns = [
+      new RegExp(`\\b(?:${VERB_ACTIONS}|${WANT_PHRASES})\\s*(?:a\\s+|the\\s+)?(?:new\\s+)?${PROJECT_NOUNS}${CONNECTORS}(.+?)${DELIMITERS}`, "i"),
+      new RegExp(`\\b(?:${VERB_ACTIONS}|${WANT_PHRASES})\\s*(?:a\\s+|the\\s+)?(?:new\\s+)?${PROJECT_NOUNS}\\s+(.+?)${DELIMITERS}`, "i"),
+      new RegExp(`\\b${PROJECT_NOUNS}${CONNECTORS}(.+?)${DELIMITERS}`, "i"),
+      new RegExp(`\\b${PROJECT_NOUNS}\\s+(.+?)${DELIMITERS}`, "i"),
+    ];
+
+    for (const pattern of createProjectPatterns) {
+      const match = normalized.match(pattern);
+      if (match?.[1]) {
+        const raw = stripLeadingLabel(clean(match[1]));
+        const withoutFillers = stripVoiceFillers(raw);
+        const name = stripLeadingTokens(takeUntil(withoutFillers, ["in", "for", "with", "and", "by", "on", "at", "of"]));
+        if (name && !["project", "workspace", "name", "it", "repo"].includes(name.toLowerCase())) {
+          entities.project_name = name;
+          break;
+        }
+      }
+    }
+  }
 
   const taskPatterns = [
     /(?:delete|remove|cancel|trash|erase|assign|move|update|create|rename|retitle)\s+(?:the\s+)?task\s+(.+?)(?:\s+from\b|\s+to\b|\s+in\b|\s+of\b|\s+on\b|$)/i,

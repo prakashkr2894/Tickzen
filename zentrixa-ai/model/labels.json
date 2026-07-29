@@ -1,3 +1,26 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:753c6f47ce49bc2429483d94d377777c233ba0a4d1d8a1605ee9f04b80448d1b
-size 551
+{
+  "label2id": {
+    "add_member": 0,
+    "analyze_project": 1,
+    "assign_task": 2,
+    "create_project": 3,
+    "create_task": 4,
+    "create_with_ai": 5,
+    "delete_task": 6,
+    "move_task": 7,
+    "show_delayed": 8,
+    "update_deadline": 9
+  },
+  "id2label": {
+    "0": "add_member",
+    "1": "analyze_project",
+    "2": "assign_task",
+    "3": "create_project",
+    "4": "create_task",
+    "5": "create_with_ai",
+    "6": "delete_task",
+    "7": "move_task",
+    "8": "show_delayed",
+    "9": "update_deadline"
+  }
+}

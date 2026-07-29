@@ -41,15 +41,33 @@ export const populateProjectMembers = (query) =>
 
 export const hasProjectAccess = (project, user) => {
   if (!project || !user) return false;
-  const projectOwnerId = project.createdBy?._id?.toString?.() || project.createdBy?.toString?.();
-  const userId = user._id?.toString?.() || user.id?.toString?.();
+  const userId = (user._id || user.id)?.toString?.();
+  if (!userId) return false;
 
-  if (user.role === 'admin' && projectOwnerId === userId) {
-    return true;
+  // System admin role has access
+  if (user.role === 'admin') return true;
+
+  // Creator / owner has access
+  const projectOwnerId = project.createdBy?._id?.toString?.() || project.createdBy?.toString?.();
+  if (projectOwnerId && projectOwnerId === userId) return true;
+
+  // Co-admins have access
+  if (Array.isArray(project.admins)) {
+    const isCoAdmin = project.admins.some(
+      (admin) => (admin?._id?.toString?.() || admin?.toString?.()) === userId
+    );
+    if (isCoAdmin) return true;
   }
 
-  return Array.isArray(project.developers) &&
-    project.developers.some((dev) => (dev?._id?.toString?.() || dev?.toString?.()) === userId);
+  // Assigned developers have access
+  if (Array.isArray(project.developers)) {
+    const isDev = project.developers.some(
+      (dev) => (dev?._id?.toString?.() || dev?.toString?.()) === userId
+    );
+    if (isDev) return true;
+  }
+
+  return false;
 };
 
 export const buildConversationFilter = (projectId, userId, conversationWith) => {
@@ -69,12 +87,17 @@ export const buildConversationFilter = (projectId, userId, conversationWith) => 
   };
 };
 
-export const formatMember = (member) => ({
-  id: member._id.toString(),
-  name: member.name,
-  email: member.email,
-  role: member.role
-});
+export const formatMember = (member) => {
+  if (!member) return null;
+  const id = member._id ? member._id.toString() : (member.id ? member.id.toString() : '');
+  if (!id) return null;
+  return {
+    id,
+    name: member.name || 'User',
+    email: member.email || '',
+    role: member.role || 'user'
+  };
+};
 
 export const getConversationKey = (projectId, recipientId) => `${projectId}:${recipientId || 'public'}`;
 

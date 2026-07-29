@@ -52,6 +52,9 @@ interface ApiUser {
   role: "admin" | "developer";
   createdAt?: string;
   avatar?: string;
+  isTrialAdmin?: boolean;
+  isPaidAdmin?: boolean;
+  trialExpiresAt?: string | null;
 }
 
 const splitName = (name: string) => {
@@ -71,6 +74,9 @@ const mapApiUser = (user: ApiUser): User => {
     role: user.role,
     avatar: user.avatar,
     createdAt: user.createdAt || new Date().toISOString(),
+    isTrialAdmin: user.isTrialAdmin,
+    isPaidAdmin: user.isPaidAdmin,
+    trialExpiresAt: user.trialExpiresAt,
   };
 };
 
@@ -186,19 +192,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const authenticateWithGoogle = async (credential: string) => {
-    const response = await apiRequest<{ token: string; user: ApiUser }>(
-      "/auth/google",
-      {
-        method: "POST",
-        body: JSON.stringify({ credential }),
-        auth: false,
+    const response = await apiRequest<{
+      token?: string;
+      user?: ApiUser;
+      requiresAccountSelection?: boolean;
+      email?: string;
+      name?: string;
+      verificationToken?: string;
+      trialAlreadyUsed?: boolean;
+    }>("/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ credential }),
+      auth: false,
+    });
+
+    if (response.requiresAccountSelection && response.verificationToken) {
+      if (typeof window !== "undefined") {
+        window.location.href = `/signup?email=${encodeURIComponent(response.email || "")}&name=${encodeURIComponent(response.name || "")}&verificationToken=${encodeURIComponent(response.verificationToken)}&trialAlreadyUsed=${response.trialAlreadyUsed || false}`;
       }
-    );
-    setToken(response.token);
-    const nextUser = mapApiUser(response.user);
-    setUser(nextUser);
-    setStoredUser(nextUser);
-    setStoredSession(response.token, nextUser);
+      return;
+    }
+
+    if (response.token && response.user) {
+      setToken(response.token);
+      const nextUser = mapApiUser(response.user);
+      setUser(nextUser);
+      setStoredUser(nextUser);
+      setStoredSession(response.token, nextUser);
+    }
   };
 
   const signup = async (data: SignupData) => {

@@ -154,6 +154,12 @@ export const createProject = async (req, res) => {
       message: 'Project created successfully',
       project: populatedProject
     });
+
+    // Notify the sidebar in real-time — placed AFTER res.json() so the
+    // HTTP response is flushed first and the socket call never delays it.
+    // Bug fix: createProject was the only mutation that never called this;
+    // all other mutations (update/delete/add-admin/remove-member) already do.
+    emitProjectUpdated(populatedProject);
   } catch (error) {
     console.error('Create project error:', error);
     res.status(500).json({ message: 'Error creating project', error: error.message });
